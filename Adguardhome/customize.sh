@@ -25,6 +25,16 @@ BACKUP_DIR="$AGH_DIR/backup"
 ADGPATH="/data/adb/modules/AdGuardHome"
 PROXY_SCRIPT="$AGH_DIR/scripts/ProxyConfig.sh"
 
+# 按 /proc cmdline 精确杀进程（不依赖 pkill 的进程名匹配，守护脚本进程名均为 sh）
+kill_by_pattern() {
+    local p c
+    for d in /proc/[0-9]*; do
+        p=${d#/proc/}
+        c=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+        case "$c" in *"$1"*) kill -KILL "$p" 2>/dev/null ;; esac
+    done
+}
+
 i18n_print "- Extracting basic module files" "- 正在解压模块基本文件"
 for file in uninstall.sh module.prop service.sh action.sh; do
   unzip -o "$ZIPFILE" "$file" -d "$MODPATH"
@@ -33,25 +43,25 @@ done
 # 正在停止ProxyConfig
 [ -f "$AGH_DIR/scripts/ProxyConfig.sh" ] && {
     i18n_print "- Stopping ProxyConfig process" "- 正在终止ProxyConfig进程"
-    pkill -9 "ProxyConfig"
+    kill_by_pattern "/data/adb/agh/scripts/ProxyConfig.sh"
 }
 
 # 检查并停止运行中的进程
 if [ -d "$AGH_DIR" ]; then
 i18n_print "- Stopping all AdGuard Home processes" "- 正在终止AdGuard Home进程"
-pkill -9 "AdGuardHome"
+kill_by_pattern "/data/adb/agh/bin/AdGuardHome"
 fi
 
 # 正在停止NoAdsService
 [ -f "$AGH_DIR/scripts/NoAdsService.sh" ] && {
     i18n_print "- Stopping NoAdsService process" "- 正在终止NoAdsService进程"
-    pkill -9 "NoAdsService"
+    kill_by_pattern "/data/adb/agh/scripts/NoAdsService.sh"
 }
 
 # 正在停止ProxyConfig
 [ -f "$AGH_DIR/scripts/ProxyConfig.sh" ] && {
     i18n_print "- Stopping ProxyConfig process" "- 正在终止ProxyConfig进程"
-    pkill -9 "ProxyConfig"
+    kill_by_pattern "/data/adb/agh/scripts/ProxyConfig.sh"
 }
 
 # 删除被锁定的残留文件
@@ -79,7 +89,7 @@ fi
 # 清除旧模块残留
 if [ -d "$AGH_DIR/ifw" ] || [ -d "$AGH_DIR/scripts" ] || [ -d "$BIN_DIR/agh_pid" ] || [ -d "$BIN_DIR/data/filters" ]; then
   i18n_print "- Cleaning up old module residues" "- 正在清理旧模块残留"
-  rm -rf "$AGH_DIR/ifw" "$AGH_DIR/scripts" "$BIN_DIR/agh_pid" "$BIN_DIR/data/filters"
+  rm -rf "$AGH_DIR/ifw" "$AGH_DIR/scripts" "$BIN_DIR/agh_pid" "$BIN_DIR/data/filters" "$AGH_DIR/agh.pid"
 fi
 
 # 创建目录并解压文件

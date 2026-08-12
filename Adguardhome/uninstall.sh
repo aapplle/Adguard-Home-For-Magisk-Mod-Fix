@@ -3,9 +3,22 @@ AGH_DIR="/data/adb/agh"
 ADGPATH="/data/adb/modules/AdGuardHome"
 PROXY_SCRIPT="$AGH_DIR/scripts/ProxyConfig.sh"
 
+# 按 /proc cmdline 精确杀进程（不依赖 pkill 的进程名匹配，守护脚本进程名均为 sh）
+kill_by_pattern() {
+    local p c
+    for d in /proc/[0-9]*; do
+        p=${d#/proc/}
+        c=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+        case "$c" in *"$1"*) kill -KILL "$p" 2>/dev/null ;; esac
+    done
+}
+
 # 检查并停止运行中的进程
-pkill -9 "NoAdsService"
-pkill -9 "ProxyConfig"
+kill_by_pattern "/data/adb/agh/bin/AdGuardHome"
+kill_by_pattern "/data/adb/agh/scripts/iptables.sh"
+kill_by_pattern "/data/adb/agh/scripts/NoAdsService.sh"
+kill_by_pattern "/data/adb/agh/scripts/ModuleMOD.sh"
+kill_by_pattern "/data/adb/agh/scripts/ProxyConfig.sh"
 
 # 还原代理模块修改
 [ -f "$PROXY_SCRIPT" ] && "$PROXY_SCRIPT" --clean
