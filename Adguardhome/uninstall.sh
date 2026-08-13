@@ -3,22 +3,12 @@ AGH_DIR="/data/adb/agh"
 ADGPATH="/data/adb/modules/AdGuardHome"
 PROXY_SCRIPT="$AGH_DIR/scripts/ProxyConfig.sh"
 
-# 按 /proc cmdline 精确杀进程（不依赖 pkill 的进程名匹配，守护脚本进程名均为 sh）
-kill_by_pattern() {
-    local p c
-    for d in /proc/[0-9]*; do
-        p=${d#/proc/}
-        c=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
-        case "$c" in *"$1"*) kill -KILL "$p" 2>/dev/null ;; esac
-    done
-}
-
-# 检查并停止运行中的进程
-kill_by_pattern "/data/adb/agh/bin/AdGuardHome"
-kill_by_pattern "/data/adb/agh/scripts/iptables.sh"
-kill_by_pattern "/data/adb/agh/scripts/NoAdsService.sh"
-kill_by_pattern "/data/adb/agh/scripts/ModuleMOD.sh"
-kill_by_pattern "/data/adb/agh/scripts/ProxyConfig.sh"
+# 按脚本名子串杀进程（本机 pkill 按 /proc cmdline 匹配，实测可命中守护进程）
+pkill -9 "AdGuardHome"
+pkill -9 "iptables.sh"
+pkill -9 "NoAdsService"
+pkill -9 "ModuleMOD"
+pkill -9 "ProxyConfig"
 
 # 清理 iptables/ip6tables 规则：历史遗留 bug——卸载后 AGH 已死，但规则
 # 残留会让 DNS 仍被 REDIRECT 到已死的随机端口、IPv6 DNS 被直接 DROP，

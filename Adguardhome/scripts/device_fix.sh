@@ -10,14 +10,14 @@
 #      设备修复逻辑本身零改动
 #
 # 本机实测问题清单（归因复查 2026-08-13 确认）：
-#   - pkill 按进程名(comm)匹配守护脚本无效：守护脚本以 sh 解释器运行，进程名
-#     是 "sh" 而非脚本名，原版 pkill -9 "ProxyConfig" 等永远匹配不到，旧守护
-#     残留并反复拉起 AGH -> 改用 /proc/PID/cmdline 关键字扫描（kill_by_pattern）
-#   - 旧实例残留导致新实例 sessions.db 锁超时崩溃的根因不是 pgrep -x 匹配不到
+#   - 守护脚本以 sh 解释器运行，进程名是 "sh"，但本机 pkill 按 /proc cmdline
+#     子串匹配（实测确认：pkill -9 "NoAdsService" 可杀到守护进程），原版
+#     pkill -9 "ProxyConfig" 等写法在本机有效，进程清理统一使用 pkill
+#   - 旧实例残留导致新实例 sessions.db 锁超时崩溃的根因不是 pgrep/pkill 匹配不到
 #     （AGH 为原生二进制 comm 固定），而是软重启时旧 iptables.sh 守护与
 #     service.sh 并发拉起两个实例竞争 sessions.db（真机日志 fatal: creating
-#     session storage: timeout）-> 启动互斥锁 start.lock；进程枚举改用
-#     PID 文件 + /proc 扫描（agh_pids）作为更健壮的补充手段
+#     session storage: timeout）-> 启动互斥锁 start.lock；进程枚举使用
+#     PID 文件 + /proc 扫描（agh_pids）作为确定性的补充手段
 #   - 守护循环用"进程枚举"做健康检查会误判并引发重建风暴 -> 改用"端口真相"
 #   - 软重启只重启 framework，不杀 Magisk 派生的进程 -> 内置清理流程
 #   - 实例启动约 1 秒后可能崩溃（DB 锁），仅看 kill -0 会误判 -> 进程+端口双重验证
@@ -75,7 +75,7 @@ release_lock() {
 log() { echo "$(date '+%F %T') $*" >> "$MAIN_LOG"; }
 
 # 列出所有 AdGuardHome 实例的 PID（PID 文件 + /proc/PID/cmdline 扫描，
-# 不依赖 pgrep/pkill 的 -x 名称匹配）
+# 不依赖 pgrep/pkill 的匹配行为，作为确定性补充手段）
 agh_pids() {
     local p c d
     {
@@ -96,17 +96,6 @@ agh_pids() {
             case "$c" in *"$AGH_MATCH"*) echo "$p" ;; esac
         done
     } | sort -u
-}
-
-# 按 cmdline 关键字杀掉守护脚本（iptables.sh / ProxyConfig.sh / 等）
-kill_by_pattern() {
-    local p c d
-    for d in /proc/[0-9]*; do
-        p=${d#/proc/}
-        { [ "$p" = "$$" ] || [ "$p" = "$PPID" ]; } && continue
-        c=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
-        case "$c" in *"$1"*) kill -KILL "$p" 2>/dev/null ;; esac
-    done
 }
 
 # 先 TERM 再 KILL，直到所有实例彻底退出
@@ -292,26 +281,28 @@ device_boot() {
     # 关键：先杀掉可能自动拉起 AGH 的守护脚本，再处理 AGH 本体，
     # 避免 kill 与"进程丢失自动重启"互相竞争（曾出现端口绑定失败的无限重试风暴）。
     # 守护脚本杀掉后可能已被再次拉起（守护循环重启机制），因此 AGH 清理后再补杀一轮：
-    # "第一轮杀守护 -> 杀 AGH -> 第二轮杀守护"三段式，杜绝中间窗口期被重新拉起
+    # "第一轮杀守护 -> 杀 AGH -> 第二轮杀守护"三段式，杜绝中间窗口期被重新拉起。
+    # 守护脚本以 sh 解释器运行，进程名是 "sh"，本机 pkill 按 /proc cmdline
+    # 子串匹配（实测确认可命中），脚本名子串即可精确匹配。
     acquire_lock || {
         log "[ERROR] failed to acquire start lock"
         return 1
     }
 
-    kill_by_pattern "$SCRIPT_DIR/iptables.sh"
-    kill_by_pattern "$SCRIPT_DIR/ProxyConfig.sh"
-    kill_by_pattern "$SCRIPT_DIR/NoAdsService.sh"
-    kill_by_pattern "$SCRIPT_DIR/ModuleMOD.sh"
+    pkill -9 "iptables.sh"
+    pkill -9 "ProxyConfig.sh"
+    pkill -9 "NoAdsService.sh"
+    pkill -9 "ModuleMOD.sh"
 
     kill_agh || {
         release_lock
         return 1
     }
 
-    kill_by_pattern "$SCRIPT_DIR/iptables.sh"
-    kill_by_pattern "$SCRIPT_DIR/ProxyConfig.sh"
-    kill_by_pattern "$SCRIPT_DIR/NoAdsService.sh"
-    kill_by_pattern "$SCRIPT_DIR/ModuleMOD.sh"
+    pkill -9 "iptables.sh"
+    pkill -9 "ProxyConfig.sh"
+    pkill -9 "NoAdsService.sh"
+    pkill -9 "ModuleMOD.sh"
 
     [ -f "$YAML_FILE" ] || {
         release_lock
