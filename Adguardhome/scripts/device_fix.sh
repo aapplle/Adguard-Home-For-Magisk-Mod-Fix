@@ -10,12 +10,8 @@
 #      设备修复逻辑本身零改动
 #
 # 本机实测问题清单（归因复查 2026-08-13 确认）：
-#   - 守护脚本以 sh 解释器运行，进程名是 "sh"，但本机 pkill 按 /proc cmdline
-#     子串匹配（实测确认：pkill -9 "NoAdsService" 可杀到守护进程），原版
-#     pkill -9 "ProxyConfig" 等写法在本机有效，进程清理统一使用 pkill
-#   - 旧实例残留导致新实例 sessions.db 锁超时崩溃的根因不是 pgrep/pkill 匹配不到
-#     （AGH 为原生二进制 comm 固定），而是软重启时旧 iptables.sh 守护与
-#     service.sh 并发拉起两个实例竞争 sessions.db（真机日志 fatal: creating
+#   - 旧实例残留导致新实例 sessions.db 锁超时崩溃的根因不是软重启时旧 iptables.sh 守护
+#     与 service.sh 并发拉起两个实例竞争 sessions.db（真机日志 fatal: creating
 #     session storage: timeout）-> 启动互斥锁 start.lock；进程枚举使用
 #     PID 文件 + /proc 扫描（agh_pids）作为确定性的补充手段
 #   - 守护循环用"进程枚举"做健康检查会误判并引发重建风暴 -> 改用"端口真相"
@@ -50,12 +46,19 @@ acquire_lock() {
     [ "$(cat "$AGH_LOCK/pid" 2>/dev/null)" = "$$" ] && return 0
     i=0
     while ! mkdir "$AGH_LOCK" 2>/dev/null; do
-        if [ ! -f "$AGH_LOCK/pid" ]; then
-            rm -rf "$AGH_LOCK" 2>/dev/null
+        pid=$(cat "$AGH_LOCK/pid" 2>/dev/null)
+        if [ -z "$pid" ]; then
+            # mkdir 成功后、写 pid 前存在微秒级窗口，此时锁内无 pid 属正常
+            # 状态而非可接管状态：先等 1 秒再重试，只有长时间无 pid 才接管
+            i=$((i+1))
+            if [ "$i" -ge 12 ]; then
+                rm -rf "$AGH_LOCK" 2>/dev/null
+                continue
+            fi
+            sleep 1
             continue
         fi
-        pid=$(cat "$AGH_LOCK/pid" 2>/dev/null)
-        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+        if ! kill -0 "$pid" 2>/dev/null; then
             rm -rf "$AGH_LOCK" 2>/dev/null
             continue
         fi
@@ -320,17 +323,17 @@ device_boot() {
     }
 
     patch_yaml_ports || {
+        cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
         release_lock
         log "[ERROR] failed to update ports in YAML, rollback"
-        cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
         return 1
     }
 
     # 修改后的 YAML 必须通过 AGH 自带校验
     "$AGH_BIN" --check-config -c "$YAML_FILE" >> "$MAIN_LOG" 2>&1 || {
+        cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
         release_lock
         log "[ERROR] AdGuardHome configuration check failed, rollback"
-        cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
         return 1
     }
 

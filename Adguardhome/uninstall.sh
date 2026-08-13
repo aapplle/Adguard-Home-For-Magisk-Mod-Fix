@@ -3,14 +3,14 @@ AGH_DIR="/data/adb/agh"
 ADGPATH="/data/adb/modules/AdGuardHome"
 PROXY_SCRIPT="$AGH_DIR/scripts/ProxyConfig.sh"
 
-# 按脚本名子串杀进程（本机 pkill 按 /proc cmdline 匹配，实测可命中守护进程）
+# [MOD] 检查并停止运行中的进程
+pkill -9 "iptables"
 pkill -9 "AdGuardHome"
-pkill -9 "iptables.sh"
 pkill -9 "NoAdsService"
 pkill -9 "ModuleMOD"
 pkill -9 "ProxyConfig"
 
-# 清理 iptables/ip6tables 规则：历史遗留 bug——卸载后 AGH 已死，但规则
+# [MOD] 清理 iptables/ip6tables 规则：历史遗留 bug——卸载后 AGH 已死，但规则
 # 残留会让 DNS 仍被 REDIRECT 到已死的随机端口、IPv6 DNS 被直接 DROP，
 # 导致设备无网络。必须先杀守护进程再清理，避免守护循环重新拉起规则。
 cleanup_iptables() {

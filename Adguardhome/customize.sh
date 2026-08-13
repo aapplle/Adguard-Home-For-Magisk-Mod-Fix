@@ -25,13 +25,12 @@ BACKUP_DIR="$AGH_DIR/backup"
 ADGPATH="/data/adb/modules/AdGuardHome"
 PROXY_SCRIPT="$AGH_DIR/scripts/ProxyConfig.sh"
 
-# 按脚本名子串杀进程（本机 pkill 按 /proc cmdline 匹配，实测可命中守护进程）
 i18n_print "- Extracting basic module files" "- 正在解压模块基本文件"
 for file in uninstall.sh module.prop service.sh action.sh; do
   unzip -o "$ZIPFILE" "$file" -d "$MODPATH"
 done
 
-# 停止 ProxyConfig
+# 正在停止ProxyConfig
 [ -f "$AGH_DIR/scripts/ProxyConfig.sh" ] && {
     i18n_print "- Stopping ProxyConfig process" "- 正在终止ProxyConfig进程"
     pkill -9 "ProxyConfig"
@@ -77,7 +76,7 @@ if [ -d "$SCRIPT_DIR" ]; then
     find "$AGH_DIR/scripts" "$ADGPATH" -type f -name "*.sh" -exec chattr -i {} \;
 fi
 
-# 清除旧模块残留
+# [MOD] 清除旧模块残留
 if [ -d "$AGH_DIR/ifw" ] || [ -d "$AGH_DIR/scripts" ] || [ -d "$BIN_DIR/agh_pid" ] || [ -d "$BIN_DIR/data/filters" ]; then
   i18n_print "- Cleaning up old module residues" "- 正在清理旧模块残留"
   rm -rf "$AGH_DIR/ifw" "$AGH_DIR/scripts" "$BIN_DIR/agh_pid" "$BIN_DIR/data/filters" "$AGH_DIR/agh.pid"

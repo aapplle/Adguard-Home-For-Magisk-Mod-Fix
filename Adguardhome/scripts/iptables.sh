@@ -21,6 +21,7 @@ setup_rules() {
     }
 
     iptables -w 2 -t nat -F ADGUARD
+    # [MOD]
     if [ -n "$adg_user" ] || [ -n "$adg_group" ]; then
         iptables -w 2 -t nat -A ADGUARD -m owner --uid-owner "$adg_user" --gid-owner "$adg_group" -j RETURN 2>/dev/null
     fi
@@ -33,9 +34,11 @@ setup_rules() {
     ip6tables -w 2 -C OUTPUT -p tcp --dport 53 -j DROP >/dev/null 2>&1 ||
         ip6tables -w 2 -A OUTPUT -p tcp --dport 53 -j DROP
 
-    # [MOD] 已移除原版"开关飞行模式刷新网络"：
-    #       该操作在自愈循环中反复触发会导致网络频繁闪断；
-    #       本机实测 DNS 重定向无需强制刷新网络即可生效
+    # 刷新网络（开关飞行模式）
+    for s in 1 0; do
+        settings put global airplane_mode_on $s
+        am broadcast -a android.intent.action.AIRPLANE_MODE
+    done
 }
 
 # [MOD] 启动即先确保实例健康（"端口真相"判定），再建规则，避免规则指向
