@@ -31,6 +31,40 @@ MAIN_LOG=$AGH_DIR/agh.log
 DAEMON_LOG=$AGH_DIR/agh_daemon.log
 AGH_BIN=$BIN_DIR/AdGuardHome
 AGH_MATCH=$AGH_DIR/bin/AdGuardHome
+# AGH 启动互斥锁：软重启时 service.sh 与旧的 iptables.sh 守护进程会并发
+# 执行启动流程，两个 AGH 实例竞争 sessions.db，后启动者 DB 锁超时直接
+# 崩溃（fatal: creating session storage: timeout），且崩溃后无存活实例、
+# 守护进程已被击杀，AGH 将一直无法启动直到下次重启。
+# 用 mkdir 的原子性实现互斥；锁文件内记录持有者 PID，持有者已死即可接管。
+AGH_LOCK=$AGH_DIR/start.lock
+
+# 获取启动互斥锁（可重入：持有者重复获取直接成功；锁忙最多等待 12 秒）
+acquire_lock() {
+    local i pid
+    [ "$(cat "$AGH_LOCK/pid" 2>/dev/null)" = "$$" ] && return 0
+    i=0
+    while ! mkdir "$AGH_LOCK" 2>/dev/null; do
+        if [ ! -f "$AGH_LOCK/pid" ]; then
+            rm -rf "$AGH_LOCK" 2>/dev/null
+            continue
+        fi
+        pid=$(cat "$AGH_LOCK/pid" 2>/dev/null)
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            rm -rf "$AGH_LOCK" 2>/dev/null
+            continue
+        fi
+        i=$((i+1))
+        [ "$i" -ge 12 ] && return 1
+        sleep 1
+    done
+    echo $$ > "$AGH_LOCK/pid" 2>/dev/null || { rm -rf "$AGH_LOCK" 2>/dev/null; return 1; }
+    return 0
+}
+
+# 释放启动互斥锁（仅持有者可释放，可安全重复调用）
+release_lock() {
+    [ "$(cat "$AGH_LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$AGH_LOCK"
+}
 
 log() { echo "$(date '+%F %T') $*" >> "$MAIN_LOG"; }
 
@@ -158,6 +192,17 @@ patch_yaml_ports() {
 # 成功后导出 AGH_PID。
 start_agh() {
     local i
+    acquire_lock || {
+        log "[ERROR] failed to acquire start lock"
+        return 1
+    }
+    # 锁内复查：已有实例正在监听目标端口则视为启动成功
+    # （防止 service.sh 与守护进程并发拉起两个实例竞争 sessions.db）
+    if [ -n "$R1" ] && port_listening udp "$R1"; then
+        AGH_PID=$(agh_pids | head -n1)
+        release_lock
+        return 0
+    fi
     export SSL_CERT_DIR="/system/etc/security/cacerts/"
     # 每次启动清空一次守护日志（AGH 输出与模块日志分离，截断互不影响）
     : > "$DAEMON_LOG" 2>/dev/null
@@ -170,10 +215,12 @@ start_agh() {
         i=$((i+1))
         kill -0 "$AGH_PID" 2>/dev/null || break
         if port_listening udp "$R1" && port_listening tcp "$R2"; then
+            release_lock
             return 0
         fi
     done
     kill -KILL "$AGH_PID" 2>/dev/null
+    release_lock
     log "[ERROR] verify failed: pid=$AGH_PID alive=$(kill -0 "$AGH_PID" 2>/dev/null && echo YES || echo NO) udp:$R1=$(port_listening udp "$R1" && echo YES || echo NO) tcp:$R2=$(port_listening tcp "$R2" && echo YES || echo NO)"
     return 1
 }
@@ -190,14 +237,27 @@ ensure_agh() {
         [ "$redir_port" != "$dport" ] && sync_redir_port "$dport"
         return 0
     fi
+    acquire_lock || {
+        log "ensure_agh: start lock busy, skip rebuild"
+        return 1
+    }
+    # 锁内复查：等待锁期间其他流程（如 service.sh）可能已完成启动
+    if [ -n "$dport" ] && port_listening udp "$dport"; then
+        release_lock
+        return 0
+    fi
     log "AdGuardHome 实例缺失或端口不一致，正在重建..."
     pids=$(agh_pids)
     for p in $pids; do kill -KILL "$p" 2>/dev/null; done
     sleep 1
-    [ -n "$dport" ] || return 1
+    [ -n "$dport" ] || {
+        release_lock
+        return 1
+    }
     if port_listening udp "$dport"; then
         # 仍有存活实例占用端口（如枚举漏掉），放弃本轮重建避免再被 DB 锁挡死
         log "port $dport still in use, skip rebuild"
+        release_lock
         return 1
     fi
     sync_redir_port "$dport"
@@ -210,4 +270,5 @@ ensure_agh() {
         sleep 1
         i=$((i+1))
     done
+    release_lock
 }

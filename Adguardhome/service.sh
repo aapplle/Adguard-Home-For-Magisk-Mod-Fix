@@ -52,12 +52,24 @@ mkdir -p "$AGH_DIR" "$SCRIPT_DIR" "$BIN_DIR"
 # 避免 kill 与"进程丢失自动重启"互相竞争（曾出现端口绑定失败的无限重试风暴）。
 # 守护脚本杀掉后可能已被再次拉起（守护循环重启机制），因此 AGH 清理后再补杀一轮：
 # "第一轮杀守护 -> 杀 AGH -> 第二轮杀守护"三段式，杜绝中间窗口期被重新拉起
+# [MOD] 全程持有启动互斥锁：软重启时漏网的旧 iptables.sh 守护会在清理/启动
+#       窗口内并发拉起 AGH，两个实例竞争 sessions.db 使后启动者 DB 锁超时
+#       崩溃且无人再拉起（历史 bug：正常重启+一次软重启后 AGH 无法启动）。
+#       锁在 start_agh 内可重入获取，启动验证完成后由 start_agh 释放。
+acquire_lock || {
+    log "[ERROR] failed to acquire start lock"
+    exit 1
+}
+
 kill_by_pattern "$SCRIPT_DIR/iptables.sh"
 kill_by_pattern "$SCRIPT_DIR/ProxyConfig.sh"
 kill_by_pattern "$SCRIPT_DIR/NoAdsService.sh"
 kill_by_pattern "$SCRIPT_DIR/ModuleMOD.sh"
 
-kill_agh || exit 1
+kill_agh || {
+    release_lock
+    exit 1
+}
 
 kill_by_pattern "$SCRIPT_DIR/iptables.sh"
 kill_by_pattern "$SCRIPT_DIR/ProxyConfig.sh"
@@ -65,6 +77,7 @@ kill_by_pattern "$SCRIPT_DIR/NoAdsService.sh"
 kill_by_pattern "$SCRIPT_DIR/ModuleMOD.sh"
 
 [ -f "$YAML_FILE" ] || {
+    release_lock
     log "[ERROR] AdGuardHome.yaml not found"
     exit 1
 }
@@ -73,11 +86,13 @@ kill_by_pattern "$SCRIPT_DIR/ModuleMOD.sh"
 cp -f "$YAML_FILE" "$YAML_BAK"
 
 pick_ports || {
+    release_lock
     log "[ERROR] failed to pick free ports"
     exit 1
 }
 
 patch_yaml_ports || {
+    release_lock
     log "[ERROR] failed to update ports in YAML, rollback"
     cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
     exit 1
@@ -85,6 +100,7 @@ patch_yaml_ports || {
 
 # 修改后的 YAML 必须通过 AGH 自带校验
 "$AGH_BIN" --check-config -c "$YAML_FILE" >> "$MAIN_LOG" 2>&1 || {
+    release_lock
     log "[ERROR] AdGuardHome configuration check failed, rollback"
     cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
     exit 1
@@ -101,6 +117,7 @@ if start_agh; then
 else
     log "[ERROR] AdGuardHome failed to start (pid=$AGH_PID, dns_port=$R1, web_port=$R2)"
     cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
+    release_lock
     exit 1
 fi
 
