@@ -26,6 +26,9 @@ PID_FILE=$AGH_DIR/agh.pid
 YAML_FILE=$BIN_DIR/AdGuardHome.yaml
 YAML_BAK=$AGH_DIR/AdGuardHome.yaml.bak
 MAIN_LOG=$AGH_DIR/agh.log
+# AGH 自身输出单独存放：AGH 长期持有其日志文件的打开 fd，
+# 与 agh.log 混用会导致截断后文件以稀疏形式"清不掉"
+DAEMON_LOG=$AGH_DIR/agh_daemon.log
 AGH_BIN=$BIN_DIR/AdGuardHome
 AGH_MATCH=$AGH_DIR/bin/AdGuardHome
 
@@ -156,7 +159,9 @@ patch_yaml_ports() {
 start_agh() {
     local i
     export SSL_CERT_DIR="/system/etc/security/cacerts/"
-    "$AGH_BIN" -c "$YAML_FILE" --no-check-update >> "$MAIN_LOG" 2>&1 &
+    # 每次启动清空一次守护日志（AGH 输出与模块日志分离，截断互不影响）
+    : > "$DAEMON_LOG" 2>/dev/null
+    "$AGH_BIN" -c "$YAML_FILE" --no-check-update >> "$DAEMON_LOG" 2>&1 &
     AGH_PID=$!
     echo "$AGH_PID" > "$PID_FILE"
     i=0
@@ -197,7 +202,8 @@ ensure_agh() {
     fi
     sync_redir_port "$dport"
     export SSL_CERT_DIR="/system/etc/security/cacerts/"
-    "$AGH_BIN" -c "$YAML_FILE" --no-check-update >> "$MAIN_LOG" 2>&1 &
+    : > "$DAEMON_LOG" 2>/dev/null
+    "$AGH_BIN" -c "$YAML_FILE" --no-check-update >> "$DAEMON_LOG" 2>&1 &
     echo $! > "$PID_FILE"
     i=0
     while [ "$i" -lt 8 ] && ! port_listening udp "$dport"; do

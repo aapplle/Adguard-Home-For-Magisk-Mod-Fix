@@ -49,13 +49,20 @@ mkdir -p "$AGH_DIR" "$SCRIPT_DIR" "$BIN_DIR"
 # =============================================================================
 
 # 关键：先杀掉可能自动拉起 AGH 的守护脚本，再处理 AGH 本体，
-# 避免 kill 与"进程丢失自动重启"互相竞争（曾出现端口绑定失败的无限重试风暴）
+# 避免 kill 与"进程丢失自动重启"互相竞争（曾出现端口绑定失败的无限重试风暴）。
+# 守护脚本杀掉后可能已被再次拉起（守护循环重启机制），因此 AGH 清理后再补杀一轮：
+# "第一轮杀守护 -> 杀 AGH -> 第二轮杀守护"三段式，杜绝中间窗口期被重新拉起
 kill_by_pattern "$SCRIPT_DIR/iptables.sh"
 kill_by_pattern "$SCRIPT_DIR/ProxyConfig.sh"
 kill_by_pattern "$SCRIPT_DIR/NoAdsService.sh"
 kill_by_pattern "$SCRIPT_DIR/ModuleMOD.sh"
 
 kill_agh || exit 1
+
+kill_by_pattern "$SCRIPT_DIR/iptables.sh"
+kill_by_pattern "$SCRIPT_DIR/ProxyConfig.sh"
+kill_by_pattern "$SCRIPT_DIR/NoAdsService.sh"
+kill_by_pattern "$SCRIPT_DIR/ModuleMOD.sh"
 
 [ -f "$YAML_FILE" ] || {
     log "[ERROR] AdGuardHome.yaml not found"
