@@ -9,12 +9,18 @@
 #   2) 对照新版 service.sh / iptables.sh，把 [MOD] 标记行照抄到新版即可，
 #      设备修复逻辑本身零改动
 #
-# 本机实测问题清单：
-#   - pgrep/pkill -x 偶尔匹配不到运行中的实例，旧实例残留导致新实例因
-#     sessions.db 被占用而 timeout 崩溃 -> 改用 PID 文件 + /proc 扫描
+# 本机实测问题清单（归因复查 2026-08-13 确认）：
+#   - pkill 按进程名(comm)匹配守护脚本无效：守护脚本以 sh 解释器运行，进程名
+#     是 "sh" 而非脚本名，原版 pkill -9 "ProxyConfig" 等永远匹配不到，旧守护
+#     残留并反复拉起 AGH -> 改用 /proc/PID/cmdline 关键字扫描（kill_by_pattern）
+#   - 旧实例残留导致新实例 sessions.db 锁超时崩溃的根因不是 pgrep -x 匹配不到
+#     （AGH 为原生二进制 comm 固定），而是软重启时旧 iptables.sh 守护与
+#     service.sh 并发拉起两个实例竞争 sessions.db（真机日志 fatal: creating
+#     session storage: timeout）-> 启动互斥锁 start.lock；进程枚举改用
+#     PID 文件 + /proc 扫描（agh_pids）作为更健壮的补充手段
 #   - 守护循环用"进程枚举"做健康检查会误判并引发重建风暴 -> 改用"端口真相"
 #   - 软重启只重启 framework，不杀 Magisk 派生的进程 -> 内置清理流程
-#   - 实例启动约 1 秒后可能崩溃，仅看 kill -0 会误判 -> 进程 + 端口双重验证
+#   - 实例启动约 1 秒后可能崩溃（DB 锁），仅看 kill -0 会误判 -> 进程+端口双重验证
 #   - 随机端口可能碰撞、YAML 改动可能损坏 -> 碰撞检测 + 备份回滚 + 回读校验
 # ============================================================================
 
@@ -271,4 +277,85 @@ ensure_agh() {
         i=$((i+1))
     done
     release_lock
+}
+
+# ============================================================================
+# [MOD] 设备专属完整启动流程（service.sh 的唯一调用点）：
+#   清理旧进程(三段式) -> 备份 YAML -> 选端口 -> 改 YAML 并回读校验
+#   -> check-config -> 启动并双重验证 -> 成功后才同步 config.prop。
+#   全程持有启动互斥锁（start_agh 内可重入），失败自动回滚 YAML。
+#   返回 0 表示成功，非 0 表示失败（调用方应退出）。
+# ============================================================================
+device_boot() {
+    local lang=${1:-zh}
+
+    # 关键：先杀掉可能自动拉起 AGH 的守护脚本，再处理 AGH 本体，
+    # 避免 kill 与"进程丢失自动重启"互相竞争（曾出现端口绑定失败的无限重试风暴）。
+    # 守护脚本杀掉后可能已被再次拉起（守护循环重启机制），因此 AGH 清理后再补杀一轮：
+    # "第一轮杀守护 -> 杀 AGH -> 第二轮杀守护"三段式，杜绝中间窗口期被重新拉起
+    acquire_lock || {
+        log "[ERROR] failed to acquire start lock"
+        return 1
+    }
+
+    kill_by_pattern "$SCRIPT_DIR/iptables.sh"
+    kill_by_pattern "$SCRIPT_DIR/ProxyConfig.sh"
+    kill_by_pattern "$SCRIPT_DIR/NoAdsService.sh"
+    kill_by_pattern "$SCRIPT_DIR/ModuleMOD.sh"
+
+    kill_agh || {
+        release_lock
+        return 1
+    }
+
+    kill_by_pattern "$SCRIPT_DIR/iptables.sh"
+    kill_by_pattern "$SCRIPT_DIR/ProxyConfig.sh"
+    kill_by_pattern "$SCRIPT_DIR/NoAdsService.sh"
+    kill_by_pattern "$SCRIPT_DIR/ModuleMOD.sh"
+
+    [ -f "$YAML_FILE" ] || {
+        release_lock
+        log "[ERROR] AdGuardHome.yaml not found"
+        return 1
+    }
+
+    # 备份旧配置，启动失败时回滚
+    cp -f "$YAML_FILE" "$YAML_BAK"
+
+    pick_ports || {
+        release_lock
+        log "[ERROR] failed to pick free ports"
+        return 1
+    }
+
+    patch_yaml_ports || {
+        release_lock
+        log "[ERROR] failed to update ports in YAML, rollback"
+        cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
+        return 1
+    }
+
+    # 修改后的 YAML 必须通过 AGH 自带校验
+    "$AGH_BIN" --check-config -c "$YAML_FILE" >> "$MAIN_LOG" 2>&1 || {
+        release_lock
+        log "[ERROR] AdGuardHome configuration check failed, rollback"
+        cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
+        return 1
+    }
+
+    if start_agh; then
+        # 启动成功后才同步 config.prop（只更新 redir_port，保留 adg_user 等）
+        sync_redir_port "$R1"
+        if [ "$lang" = "zh" ]; then
+            log "AdGuardHome 启动成功，DNS端口=$R1，Web端口=$R2，PID=$AGH_PID"
+        else
+            log "AdGuardHome started, DNS port=$R1, Web port=$R2, PID=$AGH_PID"
+        fi
+        return 0
+    else
+        log "[ERROR] AdGuardHome failed to start (pid=$AGH_PID, dns_port=$R1, web_port=$R2)"
+        cp -f "$YAML_BAK" "$YAML_FILE" 2>/dev/null
+        release_lock
+        return 1
+    fi
 }

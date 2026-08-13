@@ -32,6 +32,10 @@ setup_rules() {
         ip6tables -w 2 -A OUTPUT -p udp --dport 53 -j DROP
     ip6tables -w 2 -C OUTPUT -p tcp --dport 53 -j DROP >/dev/null 2>&1 ||
         ip6tables -w 2 -A OUTPUT -p tcp --dport 53 -j DROP
+
+    # [MOD] 已移除原版"开关飞行模式刷新网络"：
+    #       该操作在自愈循环中反复触发会导致网络频繁闪断；
+    #       本机实测 DNS 重定向无需强制刷新网络即可生效
 }
 
 # [MOD] 启动即先确保实例健康（"端口真相"判定），再建规则，避免规则指向
