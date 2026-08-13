@@ -20,6 +20,23 @@ kill_by_pattern "/data/adb/agh/scripts/NoAdsService.sh"
 kill_by_pattern "/data/adb/agh/scripts/ModuleMOD.sh"
 kill_by_pattern "/data/adb/agh/scripts/ProxyConfig.sh"
 
+# 清理 iptables/ip6tables 规则：历史遗留 bug——卸载后 AGH 已死，但规则
+# 残留会让 DNS 仍被 REDIRECT 到已死的随机端口、IPv6 DNS 被直接 DROP，
+# 导致设备无网络。必须先杀守护进程再清理，避免守护循环重新拉起规则。
+cleanup_iptables() {
+    local i
+    i=0
+    while [ "$i" -lt 3 ]; do
+        iptables -w 2 -t nat -D OUTPUT -j ADGUARD 2>/dev/null
+        i=$((i+1))
+    done
+    iptables -w 2 -t nat -F ADGUARD 2>/dev/null
+    iptables -w 2 -t nat -X ADGUARD 2>/dev/null
+    ip6tables -w 2 -D OUTPUT -p udp --dport 53 -j DROP 2>/dev/null
+    ip6tables -w 2 -D OUTPUT -p tcp --dport 53 -j DROP 2>/dev/null
+}
+cleanup_iptables
+
 # 还原代理模块修改
 [ -f "$PROXY_SCRIPT" ] && "$PROXY_SCRIPT" --clean
 
