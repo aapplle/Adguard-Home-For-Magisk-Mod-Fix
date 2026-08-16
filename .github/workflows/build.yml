@@ -137,8 +137,4 @@ jobs:
           gh release create "$TAG" "${{ steps.pack.outputs.zip }}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "AdGuard Home For Android ${{ steps.pack.outputs.version }}" \
-            --notes "上游: ${{ steps.up.outputs.tag }} @ ${{ steps.up.outputs.sha }}
-
-本包 = 上游 main 最新源码 + minfix$(cat fixes/fixrev) 竞态修复 + 上游 release 的 AdGuardHome 二进制（上游仓库不含该文件，由本流水线自动合入）。
-
-修复明细与验证记录见仓库内 changelog-fix.md。"
+            --notes "上游: ${{ steps.up.outputs.tag }} @ ${{ steps.up.outputs.sha }} | 本包 = 上游 main 最新源码 + minfix$(cat fixes/fixrev) 竞态修复 + 上游 release 的 AdGuardHome 二进制（上游仓库不含该文件，由本流水线自动合入）。修复明细与验证记录见仓库内 changelog-fix.md。"
