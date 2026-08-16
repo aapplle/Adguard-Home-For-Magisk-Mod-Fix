@@ -4,7 +4,23 @@
 本 fork 在上游基础上修复 KSU 软重启竞态，并由 GitHub Actions 自动跟随上游
 （源码取上游 main，AdGuardHome 二进制取上游 release，自动合并打包发版）。
 
-## minfix4（20260720-minfix4，2026-08-16）✅ 实机验收通过
+## minfix5（20260720-minfix5，2026-08-16）⚠️ 重要：修复 minfix4 引发的 CPU 占用
+
+**minfix4 的 `agh_running()` 用 shell 循环逐个读 `/proc/*/cmdline`（tr+grep），
+实机出现 toybox `tr` 对某个 /proc 文件死循环（单核 60%+ 持续占用、机身 105°C），
+且该设计每 5 秒周期对全系统数百进程各 fork 两次，本身就不可接受。**
+
+修复：三处 `/proc` 逐进程扫描（service.sh 清理块、iptables.sh 存活检查、
+uninstall.sh 清杀）全部改为 `pgrep/pkill -f` 按二进制全路径的正则匹配
+（`...bin/AdGuardHome( |$)`，结尾锚定防误伤 .yaml 等邻串）——C 实现、
+单次 fork、无逐进程扫描。保留 v4 的「先杀守护 → 等 1 秒 → TERM → 等待 →
+SIGKILL 兜底」时序，fork-exec 窗口漏网实例仍在下一轮检查/兜底中被捕获。
+
+沙箱验证：全矩阵（fb+软重启×3 / 自愈 / flush / fail_flag×2 / 卸载 /
+PATH 传播 / 漏网看门狗收敛 / 竞态注入）通过；**看门狗稳态 CPU 0.05%**
+（20 秒窗口 1 个 tick）。
+
+## minfix4（20260720-minfix4，2026-08-16）✅ 实机验收通过（其 /proc 扫描部分被 minfix5 取代）
 
 修复 KSU 软重启「垂死看门狗 fork-exec 窗口竞态」：软重启瞬间旧看门狗拉起的
 AGH 恰落在按名匹配的盲区里（fork 后 exec 前 comm 仍为 sh），漏网实例持有

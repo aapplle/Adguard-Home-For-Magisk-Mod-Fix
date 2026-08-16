@@ -15,13 +15,11 @@ port_listening() {
     grep -q " 0100007F:$(printf '%04X' "$1") " /proc/net/udp /proc/net/tcp 2>/dev/null
 }
 
-# AGH 存活检查：按 /proc/*/cmdline 首参数精确匹配二进制全路径，
-# 不依赖 pgrep -x/comm 匹配语义（实机存在按名匹配窗口期盲区）
+# AGH 存活检查：pgrep -f 按二进制全路径匹配（正则锚定结尾防误伤邻串），
+# 不依赖按名匹配语义（实机存在 fork-exec 窗口期盲区）。
+# 不要用 shell 循环扫 /proc/*/cmdline：实机曾致 toybox tr 死循环烧满 CPU。
 agh_running() {
-    for p in /proc/[0-9]*; do
-        tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qx "$AGH_DIR/bin/AdGuardHome" && return 0
-    done
-    return 1
+    pgrep -f "$AGH_DIR/bin/AdGuardHome( |$)" >/dev/null 2>&1
 }
 
 setup_rules() {

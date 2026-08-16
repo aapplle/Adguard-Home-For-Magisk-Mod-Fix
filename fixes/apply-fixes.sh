@@ -46,37 +46,26 @@ edit("service.sh",
 '''# 动态端口随机化
 ''',
 '''# KSU 软重启时旧进程仍存活：清理上一世代，保证单实例单世代。
-# 关键点：垂死的旧看门狗可能恰好在拉起 AGH（fork 后、exec 前 comm 仍是
-# sh，pgrep/pkill 按名匹配存在窗口期盲区）。因此：
-# 1) 先杀守护并等 1 秒，让其最后一次 spawn 落地成完整进程；
-# 2) 按 /proc/*/cmdline 首参数精确匹配 AGH 二进制全路径，多轮扫描清杀
-#    （不依赖 pgrep 匹配语义，fork-exec 窗口后一轮必被捕获）；
-# 3) 全部退出后再随机化端口启新实例，避免 sessions.db 单实例锁冲突。
+# 关键点：垂死的旧看门狗可能恰好在拉起 AGH（fork 后、exec 前 cmdline 仍是
+# 旧值）。因此：1) 先杀守护并等 1 秒让其最后一次 spawn 落地；2) 用
+# pkill/pgrep -f 按二进制全路径匹配（正则锚定结尾，防误伤 .yaml 等邻串），
+# 先 TERM 再等最多 5 秒、SIGKILL 兜底——fork-exec 窗口内的实例在下一轮
+# 检查/兜底中必被捕获；3) 全部退出后再随机化端口，避免 sessions.db 锁冲突。
+# 注意：不要用 shell 循环逐个读 /proc/*/cmdline——实机曾致 toybox tr 死循环
+# 烧满 CPU，且每周期数百次 fork 不可接受。
 pkill -f "$SCRIPT_DIR/" 2>/dev/null
 sleep 1
-i=0
-while [ "$i" -lt 5 ]; do
-    FOUND=0
-    for p in /proc/[0-9]*; do
-        if tr '\\0' '\\n' < "$p/cmdline" 2>/dev/null | grep -qx "$BIN_DIR/AdGuardHome"; then
-            kill "${p#/proc/}" 2>/dev/null
-            FOUND=1
-        fi
-    done
-    [ "$FOUND" = 0 ] && break
-    sleep 0.5; i=$((i+1))
-done
-for p in /proc/[0-9]*; do
-    tr '\\0' '\\n' < "$p/cmdline" 2>/dev/null | grep -qx "$BIN_DIR/AdGuardHome" && kill -9 "${p#/proc/}" 2>/dev/null
-done
-pkill -x "AdGuardHome" 2>/dev/null
-pkill -9 -x "AdGuardHome" 2>/dev/null
-pgrep -x "AdGuardHome" >/dev/null 2>&1; RC=$?
-echo "$(date '+%F %T') [minfix v20260720.4] 旧世代清理完成 (清理后 pgrep -x rc=$RC)" >> "$MAIN_LOG"
+AGHPAT="$BIN_DIR/AdGuardHome( |$)"
+pkill -f "$AGHPAT" 2>/dev/null
+n=0
+while [ "$n" -lt 10 ] && pgrep -f "$AGHPAT" >/dev/null 2>&1; do sleep 0.5; n=$((n+1)); done
+pkill -9 -f "$AGHPAT" 2>/dev/null
+pgrep -f "$AGHPAT" >/dev/null 2>&1; RC=$?
+echo "$(date '+%F %T') [minfix v20260720.5] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
 
 # 动态端口随机化
 ''',
-'[minfix v20260720.4]')
+'[minfix v20260720.5]')
 
 edit("service.sh",
 '''    exec "$0"
@@ -118,13 +107,11 @@ port_listening() {
     grep -q " 0100007F:$(printf '%04X' "$1") " /proc/net/udp /proc/net/tcp 2>/dev/null
 }
 
-# AGH 存活检查：按 /proc/*/cmdline 首参数精确匹配二进制全路径，
-# 不依赖 pgrep -x/comm 匹配语义（实机存在按名匹配窗口期盲区）
+# AGH 存活检查：pgrep -f 按二进制全路径匹配（正则锚定结尾防误伤邻串），
+# 不依赖按名匹配语义（实机存在 fork-exec 窗口期盲区）。
+# 不要用 shell 循环扫 /proc/*/cmdline：实机曾致 toybox tr 死循环烧满 CPU。
 agh_running() {
-    for p in /proc/[0-9]*; do
-        tr '\\0' '\\n' < "$p/cmdline" 2>/dev/null | grep -qx "$AGH_DIR/bin/AdGuardHome" && return 0
-    done
-    return 1
+    pgrep -f "$AGH_DIR/bin/AdGuardHome( |$)" >/dev/null 2>&1
 }
 
 setup_rules() {
@@ -200,12 +187,10 @@ pkill -9 "ProxyConfig"
 '''pkill -9 "NoAdsService"
 pkill -9 "ProxyConfig"
 # 停止其余守护与 AGH（-f 按命令行匹配，comm 为 sh 时原名匹配不中；
-# AGH 按 /proc/*/cmdline 首参数精确匹配清杀，不依赖 pgrep 语义），
+# AGH 同样用 -f 全路径正则清杀，不依赖 pgrep 语义），
 # 并清理 DNS 重定向规则，避免卸载后规则仍指向已删除的死端口导致断网
 pkill -f "$AGH_DIR/scripts/" 2>/dev/null
-for p in /proc/[0-9]*; do
-    tr '\\0' '\\n' < "$p/cmdline" 2>/dev/null | grep -qx "$AGH_DIR/bin/AdGuardHome" && kill -9 "${p#/proc/}" 2>/dev/null
-done
+pkill -9 -f "$AGH_DIR/bin/AdGuardHome( |$)" 2>/dev/null
 iptables -w 2 -t nat -F ADGUARD 2>/dev/null
 iptables -w 2 -t nat -D OUTPUT -j ADGUARD 2>/dev/null
 iptables -w 2 -t nat -X ADGUARD 2>/dev/null

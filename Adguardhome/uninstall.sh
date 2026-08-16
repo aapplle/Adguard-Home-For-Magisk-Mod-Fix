@@ -7,12 +7,10 @@ PROXY_SCRIPT="$AGH_DIR/scripts/ProxyConfig.sh"
 pkill -9 "NoAdsService"
 pkill -9 "ProxyConfig"
 # 停止其余守护与 AGH（-f 按命令行匹配，comm 为 sh 时原名匹配不中；
-# AGH 按 /proc/*/cmdline 首参数精确匹配清杀，不依赖 pgrep 语义），
+# AGH 同样用 -f 全路径正则清杀，不依赖 pgrep 语义），
 # 并清理 DNS 重定向规则，避免卸载后规则仍指向已删除的死端口导致断网
 pkill -f "$AGH_DIR/scripts/" 2>/dev/null
-for p in /proc/[0-9]*; do
-    tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qx "$AGH_DIR/bin/AdGuardHome" && kill -9 "${p#/proc/}" 2>/dev/null
-done
+pkill -9 -f "$AGH_DIR/bin/AdGuardHome( |$)" 2>/dev/null
 iptables -w 2 -t nat -F ADGUARD 2>/dev/null
 iptables -w 2 -t nat -D OUTPUT -j ADGUARD 2>/dev/null
 iptables -w 2 -t nat -X ADGUARD 2>/dev/null

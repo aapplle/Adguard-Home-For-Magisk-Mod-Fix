@@ -41,33 +41,22 @@ if [ "$found_hosts" = true ]; then
 fi
 
 # KSU 软重启时旧进程仍存活：清理上一世代，保证单实例单世代。
-# 关键点：垂死的旧看门狗可能恰好在拉起 AGH（fork 后、exec 前 comm 仍是
-# sh，pgrep/pkill 按名匹配存在窗口期盲区）。因此：
-# 1) 先杀守护并等 1 秒，让其最后一次 spawn 落地成完整进程；
-# 2) 按 /proc/*/cmdline 首参数精确匹配 AGH 二进制全路径，多轮扫描清杀
-#    （不依赖 pgrep 匹配语义，fork-exec 窗口后一轮必被捕获）；
-# 3) 全部退出后再随机化端口启新实例，避免 sessions.db 单实例锁冲突。
+# 关键点：垂死的旧看门狗可能恰好在拉起 AGH（fork 后、exec 前 cmdline 仍是
+# 旧值）。因此：1) 先杀守护并等 1 秒让其最后一次 spawn 落地；2) 用
+# pkill/pgrep -f 按二进制全路径匹配（正则锚定结尾，防误伤 .yaml 等邻串），
+# 先 TERM 再等最多 5 秒、SIGKILL 兜底——fork-exec 窗口内的实例在下一轮
+# 检查/兜底中必被捕获；3) 全部退出后再随机化端口，避免 sessions.db 锁冲突。
+# 注意：不要用 shell 循环逐个读 /proc/*/cmdline——实机曾致 toybox tr 死循环
+# 烧满 CPU，且每周期数百次 fork 不可接受。
 pkill -f "$SCRIPT_DIR/" 2>/dev/null
 sleep 1
-i=0
-while [ "$i" -lt 5 ]; do
-    FOUND=0
-    for p in /proc/[0-9]*; do
-        if tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qx "$BIN_DIR/AdGuardHome"; then
-            kill "${p#/proc/}" 2>/dev/null
-            FOUND=1
-        fi
-    done
-    [ "$FOUND" = 0 ] && break
-    sleep 0.5; i=$((i+1))
-done
-for p in /proc/[0-9]*; do
-    tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qx "$BIN_DIR/AdGuardHome" && kill -9 "${p#/proc/}" 2>/dev/null
-done
-pkill -x "AdGuardHome" 2>/dev/null
-pkill -9 -x "AdGuardHome" 2>/dev/null
-pgrep -x "AdGuardHome" >/dev/null 2>&1; RC=$?
-echo "$(date '+%F %T') [minfix v20260720.4] 旧世代清理完成 (清理后 pgrep -x rc=$RC)" >> "$MAIN_LOG"
+AGHPAT="$BIN_DIR/AdGuardHome( |$)"
+pkill -f "$AGHPAT" 2>/dev/null
+n=0
+while [ "$n" -lt 10 ] && pgrep -f "$AGHPAT" >/dev/null 2>&1; do sleep 0.5; n=$((n+1)); done
+pkill -9 -f "$AGHPAT" 2>/dev/null
+pgrep -f "$AGHPAT" >/dev/null 2>&1; RC=$?
+echo "$(date '+%F %T') [minfix v20260720.5] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
 
 # 动态端口随机化
 R1=$((30000+RANDOM%35536)); R2=$((30000+RANDOM%35536))
