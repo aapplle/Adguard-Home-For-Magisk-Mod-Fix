@@ -4,6 +4,25 @@
 本 fork 在上游基础上修复 KSU 软重启竞态，并由 GitHub Actions 自动跟随上游
 （源码取上游 main，AdGuardHome 二进制取上游 release，自动合并打包发版）。
 
+## minfix7（20260720-minfix7，2026-08-16 深夜）外部重生器防御
+
+实机现象（minfix6 验证轮）：网络正常，但单触发软重启后出现约 73 秒的
+无时间戳 "process lost" 刷屏（≈0.7 秒/行）——一个 **PATH 残缺环境下被某外
+部机制直接拉起的 iptables.sh**（绕过 service.sh 的 PATH 导出；pgrep/date/
+sleep 全部不可用 → 去重守卫失效 + 盲飞重生 AGH 风暴；cmdline 含
+/data/adb/agh/scripts 故能被下一轮清理扫掉）。14:xx 的 CPU 事故与此同源。
+头号嫌疑：/data/adb/service.d/ 等处的旧启动残留（待设备排查确认）。
+
+修复（对任意外部重生器免疫）：
+- iptables.sh 环境自检：PATH 自愈后仍缺 pgrep/grep/sleep 则直接退出
+  （宁可不守护 → DNS 直通，不做盲飞重生器）；
+- 看门狗每轮检测 AGH 实例数，>1 时写带时间戳的告警日志
+  （`[minfix] 警告: 检测到 N 个 AGH 进程，疑似外部重生器`），
+  设备上一旦再发生即可定位发生时刻与规模。
+
+验证：applier 一致+幂等；沙箱 fb+sr×3 / CPU 0.05% / rogue 检测（伪 AGH
+注入 → 告警触发、移除 → 告警停止）全部通过。
+
 ## minfix6（20260720-minfix6，2026-08-16 晚）修复「软重启 1 次断网、2 次恢复」
 
 实机现象：正常重启+软重启 1 次后端口全部正确但整机无网络（DNS 失败）；

@@ -56,7 +56,7 @@ n=0
 while [ "$n" -lt 10 ] && pgrep -f "$AGHPAT" >/dev/null 2>&1; do sleep 0.5; n=$((n+1)); done
 pkill -9 -f "$AGHPAT" 2>/dev/null
 pgrep -f "$AGHPAT" >/dev/null 2>&1; RC=$?
-echo "$(date '+%F %T') [minfix v20260720.6] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
+echo "$(date '+%F %T') [minfix v20260720.7] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
 
 # 动态端口随机化
 R1=$((30000+RANDOM%35536)); R2=$((30000+RANDOM%35536))

@@ -61,11 +61,11 @@ n=0
 while [ "$n" -lt 10 ] && pgrep -f "$AGHPAT" >/dev/null 2>&1; do sleep 0.5; n=$((n+1)); done
 pkill -9 -f "$AGHPAT" 2>/dev/null
 pgrep -f "$AGHPAT" >/dev/null 2>&1; RC=$?
-echo "$(date '+%F %T') [minfix v20260720.6] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
+echo "$(date '+%F %T') [minfix v20260720.7] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
 
 # 动态端口随机化
 ''',
-'[minfix v20260720.6]')
+'[minfix v20260720.7]')
 
 edit("service.sh",
 '''# 启动AdGuardHome
@@ -106,6 +106,13 @@ MAIN_LOG="$AGH_DIR/agh.log"
 # （date/getprop/pgrep 全部不可用 → 日志无时间戳、看门狗误判进程丢失疯狂重生）。
 # 无论本脚本被谁以何种环境启动，先自救补全 PATH。
 export PATH="/system/bin:/system/xbin:/vendor/bin:$PATH"
+
+# 环境自检：自愈后仍缺少关键工具时宁可退出（无人守护 → DNS 直通），
+# 也不要变成盲飞的重生器（实机曾出现：无 PATH 环境被外部拉起本脚本，
+# pgrep/date/sleep 全部不可用 → 0.7 秒/轮裸转 + AGH 重生风暴）
+command -v pgrep >/dev/null 2>&1 || exit 1
+command -v grep >/dev/null 2>&1 || exit 1
+command -v sleep >/dev/null 2>&1 || exit 1
 ''',
 '补全运行环境')
 
@@ -209,6 +216,9 @@ while true; do
     # 每轮重新读取端口：即使本守护是旧世代漏网存活，也跟随当前配置收敛，
     # 而不是固守启动时缓存的过期端口（配合下方监听检查不会写死端口）
     . "$AGH_DIR/scripts/config.prop"
+    # 多实例检测：超过 1 个 AGH 进程 = 有外部重生器在拉起实例（日志留证）
+    AGHN=$(pgrep -f "$AGH_DIR/bin/AdGuardHome( |$)" | wc -l)
+    [ "$AGHN" -gt 1 ] && echo "$(date '+%F %T') [minfix] 警告: 检测到 $AGHN 个 AGH 进程，疑似外部重生器" >> "$MAIN_LOG"
     if ! agh_running || \\
 ''',
 '每轮重新读取端口')
