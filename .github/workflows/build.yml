@@ -75,11 +75,9 @@ jobs:
         if: steps.up.outputs.build == 'true'
         run: |
           set -eu
-          # 设备上模块脚本由 mksh 解释（支持数组/进程替换等 bashism），
-          # 因此用 mksh -n 做语法校验，而不是 dash/sh
-          sudo apt-get update -qq >/dev/null
-          sudo apt-get install -qq -y mksh >/dev/null
-          find Adguardhome -name '*.sh' -print0 | xargs -0 -n1 mksh -n
+          # 语法检查用 bash -n：上游 customize.sh/ProxyConfig.sh 自带数组与
+          # <(...) 写法（标准 mksh/dash 不认，但设备 shell 支持），bash 全兼容
+          find Adguardhome -name '*.sh' -print0 | xargs -0 -n1 bash -n
           grep -q '\[minfix v' Adguardhome/service.sh
           grep -q 'agh_running()' Adguardhome/scripts/iptables.sh
           grep -q 'port_listening()' Adguardhome/scripts/iptables.sh
