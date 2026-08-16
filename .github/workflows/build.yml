@@ -75,7 +75,11 @@ jobs:
         if: steps.up.outputs.build == 'true'
         run: |
           set -eu
-          find Adguardhome -name '*.sh' -print0 | xargs -0 -n1 sh -n
+          # 设备上模块脚本由 mksh 解释（支持数组/进程替换等 bashism），
+          # 因此用 mksh -n 做语法校验，而不是 dash/sh
+          sudo apt-get update -qq >/dev/null
+          sudo apt-get install -qq -y mksh >/dev/null
+          find Adguardhome -name '*.sh' -print0 | xargs -0 -n1 mksh -n
           grep -q '\[minfix v' Adguardhome/service.sh
           grep -q 'agh_running()' Adguardhome/scripts/iptables.sh
           grep -q 'port_listening()' Adguardhome/scripts/iptables.sh
