@@ -11,6 +11,12 @@ on:
         description: "修复修订号 +1（修改 fixes/ 后发新版用）"
         type: boolean
         default: false
+  push:
+    branches: [main]
+    paths:
+      - "fixes/**"
+      - "Adguardhome/**"
+      - ".github/workflows/build.yml"
   schedule:
     - cron: "23 */6 * * *"
 
@@ -41,6 +47,7 @@ jobs:
           LAST_SHA=$(cat .upstream-sha 2>/dev/null || echo "")
           BUILD="false"
           [ "${{ github.event_name }}" = "workflow_dispatch" ] && BUILD="true"
+          [ "${{ github.event_name }}" = "push" ] && BUILD="true"
           [ "$UP_SHA" != "$LAST_SHA" ] && BUILD="true"
           [ "${{ inputs.force }}" = "true" ] && BUILD="true"
           {
