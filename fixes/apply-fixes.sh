@@ -61,11 +61,25 @@ n=0
 while [ "$n" -lt 10 ] && pgrep -f "$AGHPAT" >/dev/null 2>&1; do sleep 0.5; n=$((n+1)); done
 pkill -9 -f "$AGHPAT" 2>/dev/null
 pgrep -f "$AGHPAT" >/dev/null 2>&1; RC=$?
-echo "$(date '+%F %T') [minfix v20260720.5] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
+echo "$(date '+%F %T') [minfix v20260720.6] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
 
 # 动态端口随机化
 ''',
-'[minfix v20260720.5]')
+'[minfix v20260720.6]')
+
+edit("service.sh",
+'''# 启动AdGuardHome
+export SSL_CERT_DIR="/system/etc/security/cacerts/"
+''',
+'''# 启动AdGuardHome（最多等待默认路由就绪 15 秒：避免在网络尚未恢复的
+# 窗口里启动，导致上游 DoH 连接自出生即黑洞、DNS 持续失败）
+n=0
+while [ "$n" -lt 15 ] && ! ip route 2>/dev/null | grep -q '^default'; do
+    sleep 1; n=$((n+1))
+done
+export SSL_CERT_DIR="/system/etc/security/cacerts/"
+''',
+'默认路由就绪')
 
 edit("service.sh",
 '''    exec "$0"
@@ -164,6 +178,26 @@ edit("scripts/iptables.sh",
     ip6tables -w 2 -C OUTPUT -p tcp --dport 53 -j DROP || ip6tables -w 2 -A OUTPUT -p tcp --dport 53 -j DROP
 ''',
 '先查后加，避免重复追加')
+
+edit("scripts/iptables.sh",
+'''    # 刷新网络（开关飞行模式）
+    for s in 1 0; do
+        settings put global airplane_mode_on $s
+        am broadcast -a android.intent.action.AIRPLANE_MODE
+    done
+''',
+'''    # 刷新网络（开关飞行模式）
+    # 仅在 framework 完全启动后执行：软重启/开机早期 service.sh 先于系统就绪，
+    # 此时广播会丢失，飞行模式可能被"打开"后无人关闭 → 射频关闭、整机断网
+    # （REDIRECT 拦截 53 端口不依赖客户端刷新，跳过无副作用）
+    if [ "$(getprop sys.boot_completed)" = "1" ]; then
+        for s in 1 0; do
+            settings put global airplane_mode_on $s
+            am broadcast -a android.intent.action.AIRPLANE_MODE
+        done
+    fi
+''',
+'sys.boot_completed')
 
 edit("scripts/iptables.sh",
 '''# 规则守护循环

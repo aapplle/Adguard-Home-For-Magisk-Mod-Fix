@@ -56,14 +56,19 @@ n=0
 while [ "$n" -lt 10 ] && pgrep -f "$AGHPAT" >/dev/null 2>&1; do sleep 0.5; n=$((n+1)); done
 pkill -9 -f "$AGHPAT" 2>/dev/null
 pgrep -f "$AGHPAT" >/dev/null 2>&1; RC=$?
-echo "$(date '+%F %T') [minfix v20260720.5] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
+echo "$(date '+%F %T') [minfix v20260720.6] 旧世代清理完成 (清理后 pgrep -f rc=$RC)" >> "$MAIN_LOG"
 
 # 动态端口随机化
 R1=$((30000+RANDOM%35536)); R2=$((30000+RANDOM%35536))
 sed -i "s/^\([[:space:]]*port:\) [0-9]*/\1 $R1/; s/^\([[:space:]]*address:\) 127\.0\.0\.1:[0-9]*/\1 127.0.0.1:$R2/" "$BIN_DIR/AdGuardHome.yaml"
 sed -i "s/^redir_port=.*/redir_port=$R1/" "$SCRIPT_DIR/config.prop" || echo "redir_port=$R1" > "$SCRIPT_DIR/config.prop"
 
-# 启动AdGuardHome
+# 启动AdGuardHome（最多等待默认路由就绪 15 秒：避免在网络尚未恢复的
+# 窗口里启动，导致上游 DoH 连接自出生即黑洞、DNS 持续失败）
+n=0
+while [ "$n" -lt 15 ] && ! ip route 2>/dev/null | grep -q '^default'; do
+    sleep 1; n=$((n+1))
+done
 export SSL_CERT_DIR="/system/etc/security/cacerts/"
 "$BIN_DIR/AdGuardHome" --no-check-update &
 

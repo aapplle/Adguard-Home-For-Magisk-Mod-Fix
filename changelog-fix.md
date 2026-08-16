@@ -4,6 +4,26 @@
 本 fork 在上游基础上修复 KSU 软重启竞态，并由 GitHub Actions 自动跟随上游
 （源码取上游 main，AdGuardHome 二进制取上游 release，自动合并打包发版）。
 
+## minfix6（20260720-minfix6，2026-08-16 晚）修复「软重启 1 次断网、2 次恢复」
+
+实机现象：正常重启+软重启 1 次后端口全部正确但整机无网络（DNS 失败）；
+软重启第 2 次即恢复。日志规律：单次触发的软重启必坏、双次触发（开机与部分
+软重启）必好——第二次 toggle 会把卡住的飞行模式关掉。
+
+根因：上游 setup_rules 每次重建规则都会开关一次飞行模式（刷新网络）。
+软重启时 service.sh 先于 framework 就绪运行，两条 AIRPLANE_MODE 广播可能
+丢失/未被处理——飞行模式被"打开"后无人关闭 → 射频关闭、整机断网
+（AGH/端口/规则全部正常，与现象一致）。
+
+修复：
+- 飞行模式 toggle 加门：仅当 `sys.boot_completed=1`（framework 完全就绪、
+  广播可靠）才执行；REDIRECT 拦截 53 端口不依赖客户端刷新，跳过无副作用；
+- service.sh 启动 AGH 前最多等 15 秒默认路由就绪（`ip route` 查 default），
+  杜绝 AGH 在断网窗口启动导致上游 DoH 连接黑洞的并发动因。
+
+验证：applier 逐字节一致+幂等；沙箱矩阵（fb+sr×3/自愈/flush/fail_flag×2/
+竞态注入/CPU 0.05%）全过；飞行模式门在 boot_completed 未就绪时正确跳过。
+
 ## minfix5（20260720-minfix5，2026-08-16）⚠️ 重要：修复 minfix4 引发的 CPU 占用
 
 **minfix4 的 `agh_running()` 用 shell 循环逐个读 `/proc/*/cmdline`（tr+grep），

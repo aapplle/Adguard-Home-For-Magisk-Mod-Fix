@@ -64,10 +64,15 @@ setup_rules() {
     ip6tables -w 2 -C OUTPUT -p tcp --dport 53 -j DROP || ip6tables -w 2 -A OUTPUT -p tcp --dport 53 -j DROP
 
     # 刷新网络（开关飞行模式）
-    for s in 1 0; do
-        settings put global airplane_mode_on $s
-        am broadcast -a android.intent.action.AIRPLANE_MODE
-    done
+    # 仅在 framework 完全启动后执行：软重启/开机早期 service.sh 先于系统就绪，
+    # 此时广播会丢失，飞行模式可能被"打开"后无人关闭 → 射频关闭、整机断网
+    # （REDIRECT 拦截 53 端口不依赖客户端刷新，跳过无副作用）
+    if [ "$(getprop sys.boot_completed)" = "1" ]; then
+        for s in 1 0; do
+            settings put global airplane_mode_on $s
+            am broadcast -a android.intent.action.AIRPLANE_MODE
+        done
+    fi
 }
 
 # 规则守护循环
