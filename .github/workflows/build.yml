@@ -1,0 +1,137 @@
+name: Sync upstream & build
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "上游无更新也强制重新构建"
+        type: boolean
+        default: false
+      bump_fixrev:
+        description: "修复修订号 +1（修改 fixes/ 后发新版用）"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "23 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-build
+  cancel-in-progress: true
+
+env:
+  UP_REPO: liuzq2002/Adguard-Home-For-Magisk-Mod
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve upstream state
+        id: up
+        run: |
+          set -eu
+          UP_SHA=$(git ls-remote "https://github.com/${UP_REPO}" main | awk '{print $1}')
+          REL_JSON=$(curl -fsSL "https://api.github.com/repos/${UP_REPO}/releases/latest")
+          UP_TAG=$(jq -r '.tag_name' <<<"$REL_JSON")
+          UP_ZIP=$(jq -r '.assets[] | select(.name | test("\\.zip$")) | .browser_download_url' <<<"$REL_JSON" | head -1)
+          LAST_SHA=$(cat .upstream-sha 2>/dev/null || echo "")
+          BUILD="false"
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && BUILD="true"
+          [ "$UP_SHA" != "$LAST_SHA" ] && BUILD="true"
+          [ "${{ inputs.force }}" = "true" ] && BUILD="true"
+          {
+            echo "build=$BUILD"
+            echo "sha=$UP_SHA"
+            echo "tag=$UP_TAG"
+            echo "zip=$UP_ZIP"
+          } >> "$GITHUB_OUTPUT"
+          echo "upstream: sha=$UP_SHA tag=$UP_TAG (last built: ${LAST_SHA:-none}) -> build=$BUILD"
+
+      - name: Sync module tree and apply fixes
+        if: steps.up.outputs.build == 'true'
+        run: |
+          set -eu
+          if [ "${{ inputs.bump_fixrev }}" = "true" ]; then
+            echo $(($(cat fixes/fixrev) + 1)) > fixes/fixrev
+          fi
+          curl -fsSL "https://codeload.github.com/${UP_REPO}/tar.gz/${{ steps.up.outputs.sha }}" | tar xz
+          SRC=$(ls -d Adguard-Home-For-Magisk-Mod-*/Adguardhome)
+          rm -rf Adguardhome
+          cp -r "$SRC" Adguardhome
+          bash fixes/apply-fixes.sh Adguardhome "$(cat fixes/fixrev)"
+
+      - name: Verify scripts
+        if: steps.up.outputs.build == 'true'
+        run: |
+          set -eu
+          find Adguardhome -name '*.sh' -print0 | xargs -0 -n1 sh -n
+          grep -q '\[minfix v' Adguardhome/service.sh
+          grep -q 'agh_running()' Adguardhome/scripts/iptables.sh
+          grep -q 'port_listening()' Adguardhome/scripts/iptables.sh
+          grep -q 'Adguard-Home-For-Magisk-Mod-Fix' Adguardhome/module.prop
+          grep -Eq '^version=.+-minfix[0-9]+$' Adguardhome/module.prop
+
+      - name: Fetch AdGuardHome binary from upstream release
+        if: steps.up.outputs.build == 'true'
+        run: |
+          set -eu
+          curl -fsSL --retry 5 --retry-delay 3 -o /tmp/up.zip "${{ steps.up.outputs.zip }}"
+          unzip -j -o /tmp/up.zip 'bin/AdGuardHome' -d Adguardhome/bin/
+          chmod +x Adguardhome/bin/AdGuardHome
+          file Adguardhome/bin/AdGuardHome | grep -q ELF
+
+      - name: Pack module zip
+        if: steps.up.outputs.build == 'true'
+        id: pack
+        run: |
+          set -eu
+          VERSION=$(sed -n 's/^version=//p' Adguardhome/module.prop)
+          VCODE=$(sed -n 's/^versionCode=//p' Adguardhome/module.prop)
+          ZIP="AdGuard-Home-For-Android-${VERSION}.zip"
+          (cd Adguardhome && zip -r9 "../${ZIP}" .)
+          unzip -l "${ZIP}" | grep -q 'bin/AdGuardHome'
+          echo "zip=${ZIP}"   >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "vcode=${VCODE}"     >> "$GITHUB_OUTPUT"
+
+      - name: Commit synced tree and update Update.json
+        if: steps.up.outputs.build == 'true'
+        run: |
+          set -eu
+          VERSION="${{ steps.pack.outputs.version }}"
+          VCODE="${{ steps.pack.outputs.vcode }}"
+          TAG="v${VERSION}"
+          ZIP="${{ steps.pack.outputs.zip }}"
+          REL_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP}"
+          jq -n --arg v "$VERSION" --argjson c "$VCODE" --arg u "$REL_URL" \
+             --arg changelog "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/changelog-fix.md" \
+             '{version:$v, versionCode:$c, zipUrl:$u, changelog:$changelog}' > Update.json
+          echo "${{ steps.up.outputs.sha }}" > .upstream-sha
+          git config user.name  "minfix-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "sync upstream ${{ steps.up.outputs.tag }} (${{ steps.up.outputs.sha }}) + minfix$(cat fixes/fixrev) [skip ci]" || echo "no changes to commit"
+          git push
+
+      - name: Create release
+        if: steps.up.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          TAG="v${{ steps.pack.outputs.version }}"
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            git push origin ":refs/tags/${TAG}" || true
+          fi
+          gh release create "$TAG" "${{ steps.pack.outputs.zip }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "AdGuard Home For Android ${{ steps.pack.outputs.version }}" \
+            --notes "上游: ${{ steps.up.outputs.tag }} @ ${{ steps.up.outputs.sha }}
+
+本包 = 上游 main 最新源码 + minfix$(cat fixes/fixrev) 竞态修复 + 上游 release 的 AdGuardHome 二进制（上游仓库不含该文件，由本流水线自动合入）。
+
+修复明细与验证记录见仓库内 changelog-fix.md。"

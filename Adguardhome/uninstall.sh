@@ -3,29 +3,21 @@ AGH_DIR="/data/adb/agh"
 ADGPATH="/data/adb/modules/AdGuardHome"
 PROXY_SCRIPT="$AGH_DIR/scripts/ProxyConfig.sh"
 
-# [MOD] 检查并停止运行中的进程
-pkill -9 "iptables"
-pkill -9 "AdGuardHome"
+# 检查并停止运行中的进程
 pkill -9 "NoAdsService"
-pkill -9 "ModuleMOD"
 pkill -9 "ProxyConfig"
-
-# [MOD] 清理 iptables/ip6tables 规则：历史遗留 bug——卸载后 AGH 已死，但规则
-# 残留会让 DNS 仍被 REDIRECT 到已死的随机端口、IPv6 DNS 被直接 DROP，
-# 导致设备无网络。必须先杀守护进程再清理，避免守护循环重新拉起规则。
-cleanup_iptables() {
-    local i
-    i=0
-    while [ "$i" -lt 3 ]; do
-        iptables -w 2 -t nat -D OUTPUT -j ADGUARD 2>/dev/null
-        i=$((i+1))
-    done
-    iptables -w 2 -t nat -F ADGUARD 2>/dev/null
-    iptables -w 2 -t nat -X ADGUARD 2>/dev/null
-    ip6tables -w 2 -D OUTPUT -p udp --dport 53 -j DROP 2>/dev/null
-    ip6tables -w 2 -D OUTPUT -p tcp --dport 53 -j DROP 2>/dev/null
-}
-cleanup_iptables
+# 停止其余守护与 AGH（-f 按命令行匹配，comm 为 sh 时原名匹配不中；
+# AGH 按 /proc/*/cmdline 首参数精确匹配清杀，不依赖 pgrep 语义），
+# 并清理 DNS 重定向规则，避免卸载后规则仍指向已删除的死端口导致断网
+pkill -f "$AGH_DIR/scripts/" 2>/dev/null
+for p in /proc/[0-9]*; do
+    tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qx "$AGH_DIR/bin/AdGuardHome" && kill -9 "${p#/proc/}" 2>/dev/null
+done
+iptables -w 2 -t nat -F ADGUARD 2>/dev/null
+iptables -w 2 -t nat -D OUTPUT -j ADGUARD 2>/dev/null
+iptables -w 2 -t nat -X ADGUARD 2>/dev/null
+ip6tables -w 2 -D OUTPUT -p udp --dport 53 -j DROP 2>/dev/null
+ip6tables -w 2 -D OUTPUT -p tcp --dport 53 -j DROP 2>/dev/null
 
 # 还原代理模块修改
 [ -f "$PROXY_SCRIPT" ] && "$PROXY_SCRIPT" --clean

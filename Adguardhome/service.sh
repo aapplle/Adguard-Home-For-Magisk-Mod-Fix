@@ -7,8 +7,9 @@ MAIN_LOG="$AGH_DIR/agh.log"
 MODULES_DIR="/data/adb/modules"
 AGH_MODULE_PROP="/data/adb/modules/AdGuardHome/module.prop"
 
-# [MOD] 设备专属修复库（全部修复逻辑在 scripts/device_fix.sh，本文件其余部分保持与上游一致，迁移时只需照抄带 [MOD] 标记的行）
-. "$SCRIPT_DIR/device_fix.sh"
+# 补全守护进程运行环境：部分启动路径的 PATH 缺少 /system/bin，
+# 导致守护脚本里 date/getprop 不可用（日志无时间戳、语言检测失效）
+export PATH="/system/bin:/system/xbin:/vendor/bin:$PATH"
 
 # 解锁脚本防篡改保护
 find "$ADGPATH" -type f -name "*.sh" -exec chattr -i {} \;
@@ -39,17 +40,57 @@ if [ "$found_hosts" = true ]; then
     exit 1
 fi
 
-# =============================================================================
-# [MOD] 设备专属启动流程（原版此处直接随机端口并启动 AGH）：
-#   完整逻辑见 device_fix.sh 的 device_boot()：
-#   持锁 -> 清理旧进程(三段式) -> 备份 YAML -> 选端口 -> 改 YAML 回读校验
-#   -> check-config -> 启动并双重验证（进程 + 端口）-> 成功后才同步 config.prop
-#   全程持有启动互斥锁：软重启时漏网的旧 iptables.sh 守护会在清理/启动窗口内
-#   并发拉起 AGH，两个实例竞争 sessions.db 使后启动者 DB 锁超时崩溃且无人再
-#   拉起（历史 bug：正常重启+一次软重启后 AGH 无法启动）。
-# =============================================================================
-mkdir -p "$AGH_DIR" "$SCRIPT_DIR" "$BIN_DIR"
-device_boot "$lang" || exit 1
+# KSU 软重启时旧进程仍存活：清理上一世代，保证单实例单世代。
+# 关键点：垂死的旧看门狗可能恰好在拉起 AGH（fork 后、exec 前 comm 仍是
+# sh，pgrep/pkill 按名匹配存在窗口期盲区）。因此：
+# 1) 先杀守护并等 1 秒，让其最后一次 spawn 落地成完整进程；
+# 2) 按 /proc/*/cmdline 首参数精确匹配 AGH 二进制全路径，多轮扫描清杀
+#    （不依赖 pgrep 匹配语义，fork-exec 窗口后一轮必被捕获）；
+# 3) 全部退出后再随机化端口启新实例，避免 sessions.db 单实例锁冲突。
+pkill -f "$SCRIPT_DIR/" 2>/dev/null
+sleep 1
+i=0
+while [ "$i" -lt 5 ]; do
+    FOUND=0
+    for p in /proc/[0-9]*; do
+        if tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qx "$BIN_DIR/AdGuardHome"; then
+            kill "${p#/proc/}" 2>/dev/null
+            FOUND=1
+        fi
+    done
+    [ "$FOUND" = 0 ] && break
+    sleep 0.5; i=$((i+1))
+done
+for p in /proc/[0-9]*; do
+    tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qx "$BIN_DIR/AdGuardHome" && kill -9 "${p#/proc/}" 2>/dev/null
+done
+pkill -x "AdGuardHome" 2>/dev/null
+pkill -9 -x "AdGuardHome" 2>/dev/null
+pgrep -x "AdGuardHome" >/dev/null 2>&1; RC=$?
+echo "$(date '+%F %T') [minfix v20260720.4] 旧世代清理完成 (清理后 pgrep -x rc=$RC)" >> "$MAIN_LOG"
+
+# 动态端口随机化
+R1=$((30000+RANDOM%35536)); R2=$((30000+RANDOM%35536))
+sed -i "s/^\([[:space:]]*port:\) [0-9]*/\1 $R1/; s/^\([[:space:]]*address:\) 127\.0\.0\.1:[0-9]*/\1 127.0.0.1:$R2/" "$BIN_DIR/AdGuardHome.yaml"
+sed -i "s/^redir_port=.*/redir_port=$R1/" "$SCRIPT_DIR/config.prop" || echo "redir_port=$R1" > "$SCRIPT_DIR/config.prop"
+
+# 启动AdGuardHome
+export SSL_CERT_DIR="/system/etc/security/cacerts/"
+"$BIN_DIR/AdGuardHome" --no-check-update &
+
+# 验证AdGuardHome是否启动成功
+sleep 1
+if pgrep "AdGuardHome"; then
+    [ "$lang" = "zh" ] && echo "$(date '+%F %T') AdGuardHome 启动成功。" >> "$MAIN_LOG" || echo "$(date '+%F %T') AdGuardHome started successfully." >> "$MAIN_LOG"
+else
+    [ "$lang" = "zh" ] && echo "$(date '+%F %T') AdGuardHome启动失败，尝试重启..." >> "$MAIN_LOG" || echo "$(date '+%F %T') AdGuardHome failed to start, attempting restart..." >> "$MAIN_LOG"
+    # 清空 DNS 重定向让流量直通（避免规则指向死端口断网），退避 5 秒后重试
+    iptables -w 2 -t nat -F ADGUARD 2>/dev/null
+    ip6tables -w 2 -D OUTPUT -p udp --dport 53 -j DROP 2>/dev/null
+    ip6tables -w 2 -D OUTPUT -p tcp --dport 53 -j DROP 2>/dev/null
+    sleep 5
+    exec "$0"
+fi
 
 # 启动模块附加脚本
 "$SCRIPT_DIR/iptables.sh" &

@@ -40,19 +40,12 @@ done
 if [ -d "$AGH_DIR" ]; then
 i18n_print "- Stopping all AdGuard Home processes" "- 正在终止AdGuard Home进程"
 pkill -9 "AdGuardHome"
+# 守护脚本以 sh 解释执行（comm=sh），按名字 pkill 匹配不到，必须 -f 按路径匹配；
+# 否则旧世代守护（含 iptables.sh 看门狗）会在升级后继续存活，与新世代并发竞态
+pkill -9 -f "$AGH_DIR/scripts/" 2>/dev/null
+sleep 1
+pkill -9 -f "$AGH_DIR/scripts/" 2>/dev/null
 fi
-
-# 正在停止NoAdsService
-[ -f "$AGH_DIR/scripts/NoAdsService.sh" ] && {
-    i18n_print "- Stopping NoAdsService process" "- 正在终止NoAdsService进程"
-    pkill -9 "NoAdsService"
-}
-
-# 正在停止ProxyConfig
-[ -f "$AGH_DIR/scripts/ProxyConfig.sh" ] && {
-    i18n_print "- Stopping ProxyConfig process" "- 正在终止ProxyConfig进程"
-    pkill -9 "ProxyConfig"
-}
 
 # 删除被锁定的残留文件
 [ -f "$AGH_DIR/scripts/NoAdsService.sh" ] && {
@@ -76,10 +69,10 @@ if [ -d "$SCRIPT_DIR" ]; then
     find "$AGH_DIR/scripts" "$ADGPATH" -type f -name "*.sh" -exec chattr -i {} \;
 fi
 
-# [MOD] 清除旧模块残留
+# 清除旧模块残留
 if [ -d "$AGH_DIR/ifw" ] || [ -d "$AGH_DIR/scripts" ] || [ -d "$BIN_DIR/agh_pid" ] || [ -d "$BIN_DIR/data/filters" ]; then
   i18n_print "- Cleaning up old module residues" "- 正在清理旧模块残留"
-  rm -rf "$AGH_DIR/ifw" "$AGH_DIR/scripts" "$BIN_DIR/agh_pid" "$BIN_DIR/data/filters" "$AGH_DIR/agh.pid"
+  rm -rf "$AGH_DIR/ifw" "$AGH_DIR/scripts" "$BIN_DIR/agh_pid" "$BIN_DIR/data/filters"
 fi
 
 # 创建目录并解压文件

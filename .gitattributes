@@ -1,0 +1,8 @@
+* text=auto
+*.sh text eol=lf
+*.yml text eol=lf
+*.prop text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+Adguardhome/bin/data/filters/* -text
