@@ -1,2 +1,5 @@
 # AdGuardHome 二进制不进 git（上游仓库也不含它，由 CI 从上游 release 合入）
 Adguardhome/bin/AdGuardHome
+
+# Release zip 不入库（GitHub Release 资产已保留）
+*.zip
