@@ -11,7 +11,11 @@ pkill -9 "ProxyConfig"
 # 并清理 DNS 重定向规则，避免卸载后规则仍指向已删除的死端口导致断网
 pkill -f "$AGH_DIR/scripts/" 2>/dev/null
 for p in /proc/[0-9]*; do
-    tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qx "$AGH_DIR/bin/AdGuardHome" && kill -9 "${p#/proc/}" 2>/dev/null
+    c=
+    IFS= read -r c < "$p/cmdline" 2>/dev/null
+    case "$c" in
+    "$AGH_DIR/bin/AdGuardHome"*) kill -9 "${p#/proc/}" 2>/dev/null ;;
+    esac
 done
 iptables -w 2 -t nat -F ADGUARD 2>/dev/null
 iptables -w 2 -t nat -D OUTPUT -j ADGUARD 2>/dev/null

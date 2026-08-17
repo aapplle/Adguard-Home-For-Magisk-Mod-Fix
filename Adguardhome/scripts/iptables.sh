@@ -15,11 +15,19 @@ port_listening() {
     grep -q " 0100007F:$(printf '%04X' "$1") " /proc/net/udp /proc/net/tcp 2>/dev/null
 }
 
-# AGH 存活检查：按 /proc/*/cmdline 首参数精确匹配二进制全路径，
-# 不依赖 pgrep -x/comm 匹配语义（实机存在按名匹配窗口期盲区）
+# AGH 存活检查：按 /proc/*/cmdline 首参数前缀匹配二进制全路径
+# （read 剥离 NUL 后各参数无缝拼接，前缀即锚定 argv[0]，实测 mksh/bash
+# 语义一致），不依赖 pgrep -x/comm 匹配语义（实机存在按名匹配窗口期盲区）。
+# 纯内建实现零 fork：旧 tr|grep 管道曾致 toybox tr 对某个 /proc 文件
+# 死循环烧满一核，且逐进程 fork 洪水不可接受。c= 先清空防重定向失败时
+# 残留上一轮的值误杀。
 agh_running() {
     for p in /proc/[0-9]*; do
-        tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qx "$AGH_DIR/bin/AdGuardHome" && return 0
+        c=
+        IFS= read -r c < "$p/cmdline" 2>/dev/null
+        case "$c" in
+        "$AGH_DIR/bin/AdGuardHome"*) return 0 ;;
+        esac
     done
     return 1
 }
@@ -66,10 +74,16 @@ setup_rules() {
     ip6tables -w 2 -C OUTPUT -p tcp --dport 53 -j DROP || ip6tables -w 2 -A OUTPUT -p tcp --dport 53 -j DROP
 
     # 刷新网络（开关飞行模式）
-    for s in 1 0; do
-        settings put global airplane_mode_on $s
-        am broadcast -a android.intent.action.AIRPLANE_MODE
-    done
+    # 仅在 framework 完全启动后执行：软重启时 service.sh 先于系统就绪重跑，
+    # 此时广播可能丢失，飞行模式会被"打开"后无人关闭 → 射频关闭、整机断网
+    # （端口/规则全部正常，实机需第二次软重启才恢复——即本修复针对的症状）。
+    # REDIRECT 拦截 53 端口不依赖客户端刷新，跳过无副作用。
+    if [ "$(getprop sys.boot_completed)" = "1" ]; then
+        for s in 1 0; do
+            settings put global airplane_mode_on $s
+            am broadcast -a android.intent.action.AIRPLANE_MODE
+        done
+    fi
 }
 
 # 规则守护循环
