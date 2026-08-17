@@ -91,7 +91,10 @@ while true; do
     # 每轮重新读取端口：即使本守护是旧世代漏网存活，也跟随当前配置收敛，
     # 而不是固守启动时缓存的过期端口（配合下方监听检查不会写死端口）
     . "$AGH_DIR/scripts/config.prop"
+    # 端口真实监听也纳入健康条件：AGH 进程存活但 DNS 端口未监听时，
+    # 必须触发 setup_rules 清空/重建规则，避免规则指向死端口持续断网。
     if ! agh_running || \
+       ! port_listening "$redir_port" || \
        ! iptables -w 2 -t nat -C ADGUARD -p udp --dport 53 -j REDIRECT --to-ports "$redir_port" || \
        ! iptables -w 2 -t nat -C ADGUARD -p tcp --dport 53 -j REDIRECT --to-ports "$redir_port" || \
        ! ip6tables -w 2 -C OUTPUT -p udp --dport 53 -j DROP || \

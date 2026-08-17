@@ -4,6 +4,26 @@
 本 fork 在上游基础上修复 KSU 软重启竞态，并由 GitHub Actions 自动跟随上游
 （源码取上游 main，AdGuardHome 二进制取上游 release，自动合并打包发版）。
 
+## minfix9（20260720-minfix9，2026-08-17）KSU late-load 跳过启动 + 看门狗补端口监听
+
+- **重新归因“外部启动器双跑”**：KSU 官方源码显示 late-load 路径也会执行
+  service 阶段，随后软重启的 `on_services()` 又执行一次，同一启动周期内
+  `service.sh` 会被多次触发。这不是另一个 root 管理器，而是 KSU 自身的
+  late-load + soft reboot 多阶段执行。
+- **service.sh 新增 late-load 首次跳过**：`KSU_LATE_LOAD=1` 在整个 boot
+  周期内都是常驻标志（内核 flag），不能只凭它判断“本次是 late-load 首次
+  执行”。实现用 **boot_id marker**：同一 boot 内首次 late-load 执行跳过，
+  之后（如 soft reboot 的 service 阶段）正常启动。当前使用场景（late-load
+  后不软重启）不存在，因此不会牺牲功能，同时从根上消除 late-load 与
+  soft reboot 两个 service.sh 世代重叠。
+- **移除 fix8 双跑合并等待**：late-load 首次跳过已消除唯一已知的并发
+  `service.sh` 重叠源，`otherservice()` / 20 秒等待 / 终局判定不再需要；
+- **iptables.sh 看门狗循环加入 `port_listening "$redir_port"`**：AGH 进程
+  存活但 DNS 端口未监听时，触发 `setup_rules()` 清空/重建规则，避免规则
+  指向死端口持续断网。端口未恢复时按原设计清空 REDIRECT 让 DNS 直通。
+- 验证：新增 phaseN（late-load 跳过 + 普通启动回归）、phaseM（端口死亡自动
+  清规则直通）；phaseL 改为“无合并”单启动回归；phaseA（fb+sr×3）回归全过。
+
 ## minfix8（20260720-minfix8，2026-08-17）冷启动双跑合并：消除「清理,清理,成功,成功」形态
 
 minfix7 实机日志（03:15 / 07:55 两轮冷启动）：健康跳过门已压制重触发（03:16、

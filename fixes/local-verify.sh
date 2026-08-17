@@ -13,7 +13,10 @@ echo "--- marker greps ---"
 grep -q '\[minfix v'                 Adguardhome/service.sh              || { echo 'FAIL m1'; FAIL=1; }
 grep -q 'agh_running()'              Adguardhome/scripts/iptables.sh     || { echo 'FAIL m2'; FAIL=1; }
 grep -q 'port_listening()'           Adguardhome/scripts/iptables.sh     || { echo 'FAIL m3'; FAIL=1; }
-grep -q 'Adguard-Home-For-Magisk-Mod-Fix' Adguardhome/module.prop        || { echo 'FAIL m4'; FAIL=1; }
-grep -Eq '^version=.+-minfix[0-9]+$' Adguardhome/module.prop             || { echo 'FAIL m5'; FAIL=1; }
+grep -q 'KSU_LATE_LOAD'               Adguardhome/service.sh            || { echo 'FAIL m4'; FAIL=1; }
+grep -q 'port_listening "\$redir_port"' Adguardhome/scripts/iptables.sh  || { echo 'FAIL m5'; FAIL=1; }
+grep -q 'Adguard-Home-For-Magisk-Mod-Fix' Adguardhome/module.prop        || { echo 'FAIL m6'; FAIL=1; }
+grep -Eq '^version=.+-minfix[0-9]+$' Adguardhome/module.prop             || { echo 'FAIL m7'; FAIL=1; }
+if grep -q 'otherservice()' Adguardhome/service.sh; then { echo 'FAIL m8: fix8 merge code still present'; FAIL=1; }; fi
 [ "$FAIL" = 0 ] && echo ALL-VERIFY-OK || echo VERIFY-FAILED
 exit $FAIL

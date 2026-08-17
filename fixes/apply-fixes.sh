@@ -39,6 +39,22 @@ edit("service.sh",
 # 补全守护进程运行环境：部分启动路径的 PATH 缺少 /system/bin，
 # 导致守护脚本里 date/getprop 不可用（日志无时间戳、语言检测失效）
 export PATH="/system/bin:/system/xbin:/vendor/bin:$PATH"
+
+# KSU late-load 阶段不启动 AGH：该场景后必然跟软重启/正常重启，
+# 提前启动只会产生与软重启重叠的并发世代（实机 2~3s 双跑根因）。
+# 注意：KSU_LATE_LOAD=1 在整个 boot 周期内都是 1（内核 flag 常驻），
+# 不能只凭它判断“本次是 late-load 首次执行”。用 boot_id 标记：同一 boot 内
+# 首次 late-load 执行才跳过；之后（如 soft reboot 的 service 阶段）正常启动。
+if [ "$KSU_LATE_LOAD" = "1" ]; then
+    BOOT_ID=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+    SKIP_MARK="$AGH_DIR/.late_load_skip"
+    OLD_BOOT=$(cat "$SKIP_MARK" 2>/dev/null || true)
+    if [ -n "$BOOT_ID" ] && [ "$OLD_BOOT" != "$BOOT_ID" ]; then
+        echo "$BOOT_ID" > "$SKIP_MARK"
+        echo "$(date '+%F %T') [minfix v20260720.9] KSU late-load 首次执行，跳过启动，等待后续重启阶段" >> "$MAIN_LOG"
+        exit 0
+    fi
+fi
 ''',
 '补全守护进程运行环境')
 
@@ -80,18 +96,17 @@ done
 pkill -x "AdGuardHome" 2>/dev/null
 pkill -9 -x "AdGuardHome" 2>/dev/null
 pgrep -x "AdGuardHome" >/dev/null 2>&1; RC=$?
-echo "$(date '+%F %T') [minfix v20260720.8] 旧世代清理完成 (清理后 pgrep -x rc=$RC)" >> "$MAIN_LOG"
+echo "$(date '+%F %T') [minfix v20260720.9] 旧世代清理完成 (清理后 pgrep -x rc=$RC)" >> "$MAIN_LOG"
 
 # 动态端口随机化
 ''',
-'[minfix v20260720.8]')
+'旧世代清理完成')
 
 edit("service.sh",
 '''# KSU 软重启时旧进程仍存活：清理上一世代，保证单实例单世代。
 ''',
-'''# 本启动周期已存在健康世代则直接跳过（外部启动器会并发双跑/重复触发
-# service.sh；此前每次触发都拆掉健康世代重建，等路由+重启的十几秒里 DNS
-# 完全中断——实机 02:53 世代切换窗口即「短暂无网络」的来源）。仅在
+'''# 本启动周期已存在健康世代则直接跳过（KSU late-load 首次已由 minfix9 跳过；
+# 后续 soft reboot 若发现健康世代仍在服役，也无需拆台重建）。仅在
 # 「确证健康」时跳过：AGH 存活（cmdline 前缀）+ 看门狗存活 + config 端口
 # 真实监听，三者齐备；任一不成立即走下方正常清理重建（宁重建勿漏判）。
 gen_healthy() {
@@ -109,38 +124,7 @@ gen_healthy() {
     [ -n "${redir_port:-}" ] && grep -q " 0100007F:$(printf '%04X' "$redir_port" 2>/dev/null) " /proc/net/udp /proc/net/tcp 2>/dev/null
 }
 if gen_healthy; then
-    echo "$(date '+%F %T') [minfix v20260720.8] 当前世代健康，跳过重复启动" >> "$MAIN_LOG"
-    exit 0
-fi
-# 并发双跑合并：健康门未过但另有 service.sh 实例存活（零 fork 内建扫描
-# 按 pid 剔除自身后命中，即外部启动器并发双跑，另一实例大概率正处于
-# 等路由的启动窗口——冷启动期
-# 「清理,清理,成功,成功」形态的来源）。最多等 20 秒，期间变为健康则跳过；
-# 超时仍不健康则本实例照常走下方清理重建（兜底行为与原先完全一致，无锁
-# 无标记文件，等待仅以「另一实例存活」为准，失败安全）。
-otherservice() {
-    for p in /proc/[0-9]*; do
-        [ "${p#/proc/}" = "$$" ] && continue
-        c=
-        IFS= read -r c < "$p/cmdline" 2>/dev/null
-        case "$c" in
-        *"$ADGPATH/service.sh"*) return 0 ;;
-        esac
-    done
-    return 1
-}
-n=0
-while [ "$n" -lt 20 ] && otherservice; do
-    if gen_healthy; then
-        echo "$(date '+%F %T') [minfix v20260720.8] 另一实例已完成启动，本实例跳过" >> "$MAIN_LOG"
-        exit 0
-    fi
-    sleep 1; n=$((n+1))
-done
-# 终局判定：另一实例退出后，其拉起的世代（AGH+看门狗独立进程）仍在服役；
-# 此处健康即跳过——1 秒轮询可能错过「看门狗已起→实例退出」的亚秒级窗口。
-if gen_healthy; then
-    echo "$(date '+%F %T') [minfix v20260720.8] 另一实例已完成启动，本实例跳过" >> "$MAIN_LOG"
+    echo "$(date '+%F %T') [minfix v20260720.9] 当前世代健康，跳过重复启动" >> "$MAIN_LOG"
     exit 0
 fi
 
@@ -152,8 +136,8 @@ edit("service.sh",
 '''# 动态端口随机化
 R1=$((30000+RANDOM%35536)); R2=$((30000+RANDOM%35536))
 ''',
-'''# 动态端口随机化（以 boot_id 为种子：同一启动周期内取值恒定——外部启动器
-# 并发双跑/重复触发 service.sh 时，两次随机化写入相同值，不再互相覆盖产生
+'''# 动态端口随机化（以 boot_id 为种子：同一启动周期内取值恒定——KSU
+# late-load/soft reboot 多阶段触发 service.sh 时，两次随机化写入相同值，不再互相覆盖产生
 # 端口漂移（漂移时规则指向死端口 → 短暂无网络）。种子取 cksum 十进制的
 # 两个不重叠 5 位切片并强制 10# 十进制：数值 <10^5 远离 32 位边界，
 # mksh/bash 实测逐位一致——整数位运算曾在设备 mksh 求值失败（minfix9 教训）。
@@ -325,7 +309,10 @@ while true; do
     # 每轮重新读取端口：即使本守护是旧世代漏网存活，也跟随当前配置收敛，
     # 而不是固守启动时缓存的过期端口（配合下方监听检查不会写死端口）
     . "$AGH_DIR/scripts/config.prop"
+    # 端口真实监听也纳入健康条件：AGH 进程存活但 DNS 端口未监听时，
+    # 必须触发 setup_rules 清空/重建规则，避免规则指向死端口持续断网。
     if ! agh_running || \\
+       ! port_listening "$redir_port" || \\
 ''',
 '每轮重新读取端口')
 
