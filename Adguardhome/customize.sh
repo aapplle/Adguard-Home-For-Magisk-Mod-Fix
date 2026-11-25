@@ -141,8 +141,8 @@ if [ "$IS_UPGRADE" -eq 0 ] && [ -x "$BIN_DIR/AdGuardHome" ]; then
     _rand_pw=$(tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 16)
     if [ -n "$_rand_pw" ]; then
         _hash=$(printf '%s\n' "$_rand_pw" | "$BIN_DIR/AdGuardHome" --hash-password 2>/dev/null)
+        # shellcheck disable=SC2016
         case "$_hash" in
-            # shellcheck disable=SC2016
             '$2'*)
                 _esc_hash=$(printf '%s' "$_hash" | sed 's/[\\&|]/\\&/g')
                 sed -i "s|^\([[:space:]]*password:\).*|\1 ${_esc_hash}|" "$BIN_DIR/AdGuardHome.yaml"
