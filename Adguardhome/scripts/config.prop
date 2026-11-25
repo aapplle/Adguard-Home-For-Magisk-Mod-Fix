@@ -1,6 +1,23 @@
-# 注：以下修改后必须重启生效
-# AdGuardHome DNS 重定向端口
-redir_port=5591
+# AdGuard Home For Android (Hardened Fix) 配置文件
+# 注意：本文件仅作为键值配置解析，不会作为 Shell 执行；修改后重启生效。
 
-# 代理订阅链接（在引号内填入你的订阅）
-PROXY_URL=" "
+# 守护检查周期（秒，最低 10，默认 30，避免频繁唤醒破坏 Doze 休眠）
+watch_interval=30
+
+# 是否启用广告缓存目录锁定（仅针对明确广告/开屏目录，已移除高危系统目录）
+enable_noads=true
+
+# 是否自动同步常见代理模块（Surfing/Box/Mihomo/Clash）DNS 指向 AdGuardHome
+enable_proxy_sync=true
+
+# 是否在运行时关闭系统私人 DNS（卸载时自动恢复原设置）
+disable_private_dns=true
+
+# 是否在运行时关闭 TCP Fast Open 以防止绕过 SNI 嗅探（卸载时自动恢复原设置）
+disable_tfo=true
+
+# 是否允许规则重建后开关飞行模式刷新网络（默认 false，避免中断通话/蓝牙/VPN）
+allow_airplane_refresh=false
+
+# 代理订阅链接（留空则不修改代理模块的 proxy-providers url）
+PROXY_URL=""

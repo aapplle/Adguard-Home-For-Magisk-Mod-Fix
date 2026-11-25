@@ -1,69 +1,83 @@
 #!/system/bin/sh
+# Boot-time launcher for AdGuard Home For Android (Hardened Fix).
+
 SCRIPT_DIR="/data/adb/agh/scripts"
-ADGPATH="/data/adb/modules/AdGuardHome"
-AGH_DIR="/data/adb/agh"
-BIN_DIR="$AGH_DIR/bin"
-MAIN_LOG="$AGH_DIR/agh.log"
-MODULES_DIR="/data/adb/modules"
-AGH_MODULE_PROP="/data/adb/modules/AdGuardHome/module.prop"
+[ -f "$SCRIPT_DIR/common.sh" ] || exit 1
+. "$SCRIPT_DIR/common.sh"
 
-# 解锁脚本防篡改保护
-find "$ADGPATH" -type f -name "*.sh" -exec chattr -i {} \;
+setup_timezone
+load_config
 
-# 系统语言检测
-locale=$(getprop persist.sys.locale)
-[ -z "$locale" ] && locale="zh"
-case $locale in zh*) lang=zh ;; *) lang=en ;; esac
-
-# 检查hosts模块并中止启动
-found_hosts=false
-for module in "$MODULES_DIR"/*; do 
-  [ -d "$module" ] && [ -f "$module/system/etc/hosts" ] && {
-    found_hosts=true
-    touch "$module/remove"
-  }
-done
-if [ "$found_hosts" = true ]; then
-    if [ "$lang" = "zh" ]; then
-        MSG="检测到hosts模块，AdGuardHome启动已中止"
-        DESC="⚠️ AdGuardHome已禁用 - 检测到hosts模块（已标记移除，请重启设备）"
-    else
-        MSG="Hosts module detected, AdGuardHome startup aborted"
-        DESC="⚠️ AdGuardHome disabled - Hosts module detected (marked for removal, Please restart the device)"
-    fi
-    [ -f "$AGH_MODULE_PROP" ] && sed -i "s/description=.*/description=$DESC/" "$AGH_MODULE_PROP"
-    echo "$(date '+%F %T') [ERROR] $MSG" >> "$MAIN_LOG"
-    exit 1
-fi
-
-# 动态端口随机化
-if ! pgrep "AdGuardHome"; then
-R1=$((30000+RANDOM%35536)); R2=$((30000+RANDOM%35536))
-sed -i "/^dns:/,/^[^[:space:]]/ s/^\([[:space:]]*port:\) [0-9]*/\1 $R1/; s/^\([[:space:]]*address:\) 127\.0\.0\.1:[0-9]*/\1 127.0.0.1:$R2/" "$BIN_DIR/AdGuardHome.yaml"
-sed -i "s/^redir_port=.*/redir_port=$R1/" "$SCRIPT_DIR/config.prop"
-
-# 启动AdGuardHome
-export SSL_CERT_DIR="/system/etc/security/cacerts/"
-"$BIN_DIR/AdGuardHome" --no-check-update &
-
-# 验证AdGuardHome是否启动成功
+# Wait for Android boot completion (bounded to 60s)
+_wait=0
+while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ] && [ "$_wait" -lt 60 ]; do
     sleep 1
-    if pgrep "AdGuardHome"; then
-        [ "$lang" = "zh" ] && echo "$(date '+%F %T') AdGuardHome 启动成功。" >> "$MAIN_LOG" || echo "$(date '+%F %T') AdGuardHome started successfully." >> "$MAIN_LOG"
-    else
-        [ "$lang" = "zh" ] && echo "$(date '+%F %T') AdGuardHome启动失败，尝试重启..." >> "$MAIN_LOG" || echo "$(date '+%F %T') AdGuardHome failed to start, attempting restart..." >> "$MAIN_LOG"
-        exec "$0"
+    _wait=$((_wait + 1))
+done
+
+# Detect Hosts modules and warn (never auto-delete user modules)
+for _m in /data/adb/modules/*; do
+    [ -d "$_m" ] || continue
+    [ -f "$_m/disable" ] && continue
+    [ -f "$_m/remove" ] && continue
+    if [ -f "$_m/system/etc/hosts" ]; then
+        agh_log WARN "Active Hosts module detected: $_m (may interfere with DNS filtering)"
     fi
+done
+
+# Optionally disable TCP Fast Open (original value backed up by NoAdsService.sh)
+"$SCRIPT_DIR/NoAdsService.sh" apply
+if [ "$disable_tfo" = "true" ] && [ -w /proc/sys/net/ipv4/tcp_fastopen ]; then
+    echo 0 > /proc/sys/net/ipv4/tcp_fastopen 2>/dev/null
 fi
 
-# 启动模块附加脚本
-pgrep -f "$SCRIPT_DIR/iptables.sh" || "$SCRIPT_DIR/iptables.sh" &
-pgrep -f "$SCRIPT_DIR/ModuleMOD.sh" || "$SCRIPT_DIR/ModuleMOD.sh" &
-pgrep -f "$SCRIPT_DIR/NoAdsService.sh" || "$SCRIPT_DIR/NoAdsService.sh" &
-pgrep -f "$SCRIPT_DIR/ProxyConfig.sh" || "$SCRIPT_DIR/ProxyConfig.sh" &
+# Generate non-colliding random ports on cold start
+pick_random_port() {
+    _r=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' \n')
+    [ -z "$_r" ] && _r=12345
+    echo $((30000 + (_r % 35000)))
+}
 
-# 执行脚本防篡改保护
-find "$ADGPATH" -type f -name "*.sh" -exec chattr +i {} \;
+if ! is_agh_running; then
+    R1=$(pick_random_port)
+    R2=$(pick_random_port)
+    while [ "$R1" = "$R2" ]; do
+        R2=$(pick_random_port)
+    done
 
-# 日志超限时清空
-[ "$(wc -c < "$MAIN_LOG")" -ge 102400 ] && : > "$MAIN_LOG"
+    if [ -f "$YAML_FILE" ]; then
+        sed -i "/^dns:/,/^[^[:space:]]/ s/^\([[:space:]]*port:\)[[:space:]]*[0-9]*/\1 $R1/" "$YAML_FILE"
+        sed -i "/^http:/,/^[^[:space:]]/ s/^\([[:space:]]*address:\)[[:space:]]*127\.0\.0\.1:[0-9]*/\1 127.0.0.1:$R2/" "$YAML_FILE"
+    fi
+
+    # Bounded startup attempts with backoff (never infinite exec "$0")
+    _started=0
+    _try=1
+    while [ "$_try" -le 5 ]; do
+        start_agh_process
+        sleep 2
+        if is_agh_running; then
+            _started=1
+            break
+        fi
+        agh_log WARN "AdGuardHome start attempt $_try/5 failed; retrying after backoff"
+        sleep "$_try"
+        _try=$((_try + 1))
+    done
+
+    if [ "$_started" -eq 1 ]; then
+        agh_log INFO "AdGuardHome started (dns=127.0.0.1:$R1, http=127.0.0.1:$R2)"
+        update_module_prop_status ok
+    else
+        agh_log ERROR "AdGuardHome failed to start after 5 attempts; check $AGH_DIR/crash.log"
+        update_module_prop_status err "⚠️ AdGuardHome 启动失败，请查看 /data/adb/agh/agh.log 与 crash.log"
+        exit 1
+    fi
+else
+    update_module_prop_status ok
+fi
+
+# Apply firewall and proxy integration once, then start single unified watchdog
+"$SCRIPT_DIR/iptables.sh" apply
+[ "$enable_proxy_sync" = "true" ] && "$SCRIPT_DIR/ProxyConfig.sh" apply
+"$SCRIPT_DIR/watchdog.sh" >/dev/null 2>&1 &

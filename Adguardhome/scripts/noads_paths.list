@@ -1,0 +1,123 @@
+# 明确用于开屏/广告缓存的路径清单（每行一个绝对路径，必须以 /data/ 开头）
+# 说明：已移除 /data/system/ifw、/data/data/com.galaxy.stock/files、通用 shared_prefs、
+# Pictures 与通用 Glide/image_manager_disk_cache 等高误伤目录。
+
+# 美团外卖
+/data/data/com.sankuai.meituan.takeoutnew/files/cips/common/waimai/assets/ad
+/data/media/0/Android/data/com.sankuai.meituan.takeoutnew/files/cips/common/waimai/assets/promotion
+
+# 知乎
+/data/data/com.zhihu.android/files/ad
+
+# 哔哩哔哩
+/data/data/tv.danmaku.bili/files/splash2
+/data/data/tv.danmaku.bili/files/splash_top_view
+
+# 中国广电
+/data/data/com.ai.obc.cbn.app/files/splashShow
+
+# 酷我音乐
+/data/media/0/Android/data/cn.kuwo.player/files/KuwoMusic/.screenad
+/data/media/0/Android/data/cn.kuwo.player/files/KuwoMusic/.ad
+/data/media/0/Android/data/cn.kuwo.kwmusichd/files/KwPlayerHD/.screenad
+
+# 网易云音乐
+/data/media/0/Android/data/com.netease.cloudmusic/cache/Ad
+/data/data/com.netease.cloudmusic/shared_prefs/ad.xml
+
+# 大麦
+/data/data/cn.damai/files/ad_dir
+
+# 顺丰速运
+/data/data/com.sf.activity/files/openScreenADsImg
+
+# 猫耳 FM
+/data/data/cn.missevan/cache/splash
+
+# 小米有品
+/data/data/com.xiaomi.youpin/shared_prefs/ad_prf.xml
+
+# 高德地图
+/data/data/com.autonavi.minimap/files/splash
+
+# 腾讯 QQ
+/data/media/0/Android/data/com.tencent.mobileqq/files/vas_ad
+
+# 安居客
+/data/data/com.anjuke.android.app/cache/splash_ad
+
+# 买单吧
+/data/data/com.bankcomm.maidanba/files/tabAdsPath
+
+# 米家
+/data/data/com.xiaomi.smarthome/files/sh_ads_file
+
+# 米游社
+/data/media/0/Android/data/com.mihoyo.hyperion/cache/splash
+
+# 天翼云盘
+/data/data/com.cn21.ecloud/files/ecloud_current_screenad.obj
+
+# 闲鱼
+/data/media/0/Android/data/com.taobao.idlefish/files/splash_ad_assets
+/data/media/0/Android/data/com.taobao.idlefish/files/ad
+/data/data/com.taobao.idlefish/cache/beizi
+
+# 航旅纵横
+/data/data/com.umetrip.android.msky.app/files/ad
+
+# 携程旅行
+/data/media/0/Android/data/ctrip.android.view/cache/CTADCache
+/data/data/ctrip.android.view/files/CTAD
+
+# 智行火车票
+/data/media/0/Android/data/com.yipiao/files/CTADCache
+/data/media/0/Android/data/com.yipiao/files/CTADSet
+
+# 同花顺
+/data/data/com.hexin.plat.android/cache/splash_images
+
+# 腾讯地图
+/data/data/com.tencent.map/databases/splash.db
+
+# 今日头条
+/data/data/com.ss.android.article.news/files/splashCache
+
+# APKPure
+/data/data/com.apkpure.aegon/cache/splash
+
+# 酷狗音乐
+/data/media/0/Android/data/com.kugou.android/files/kugou/.splash_v4
+
+# 掌上无畏契约
+/data/media/0/Android/data/com.tencent.apps.valorant/cache/splash
+
+# WakeUp 课程表（第三方广告 SDK 配置）
+/data/data/com.suda.yzune.wakeupschedule/shared_prefs/com.baidu.homework.Preference.FastAdPreference.xml
+/data/data/com.suda.yzune.wakeupschedule/shared_prefs/mobads_aplist_status_new.xml
+
+# 中信银行
+/data/data/com.ecitic.bank.mobile/files/citic/advs
+
+# 江苏银行
+/data/data/cn.jsb.china/files/jsbank/splash
+
+# 盒马
+/data/data/com.wudaokou.hippo/shared_prefs/splash.xml
+
+# 完美世界电竞
+/data/data/com.pwrd.steam.esports/shared_prefs/advertisement_sp_name.xml
+
+# 人卫
+/data/data/com.pmph.irenwei/files/ad.gif
+
+# 南方基金
+/data/media/0/Android/data/com.nanfangjijin.app/files/ad
+
+# 银华生利宝
+/data/media/0/Android/data/com.ihandy.fund/cache/download/splash
+
+# 汽水音乐
+/data/media/0/com.luna.music/cache/image_commercial_cache
+/data/media/0/com.luna.music/cache/pangle_com.byted.pangle
+/data/media/0/com.luna.music/files/splashCache

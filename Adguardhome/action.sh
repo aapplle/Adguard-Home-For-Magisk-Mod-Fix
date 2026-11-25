@@ -1,15 +1,23 @@
 #!/system/bin/sh
-AGH_DIR="/data/adb/agh"
-BIN_DIR="$AGH_DIR/bin"
-YAML_FILE="$BIN_DIR/AdGuardHome.yaml"
+# Open AdGuard Home Web UI via Magisk/KSU/APatch Action button.
 
-echo "等待 1 秒..."
-echo "刷新页面以查看更改。"
-sleep 1
+SCRIPT_DIR="/data/adb/agh/scripts"
+[ -f "$SCRIPT_DIR/common.sh" ] && . "$SCRIPT_DIR/common.sh"
 
-# 获取动态端口
-PORT=$(sed -n 's/^[[:space:]]*address: 127\.0\.0\.1:\([0-9]*\).*/\1/p' "$YAML_FILE")
+if ! is_agh_running; then
+    echo "AdGuardHome 当前未运行，请检查 /data/adb/agh/agh.log 与 /data/adb/agh/crash.log。"
+    exit 1
+fi
 
-# 自动跳转到浏览器并打开 Web UI
-echo "正在打开浏览器 (端口 $PORT)..."
-am start -a android.intent.action.VIEW -d "http://127.0.0.1:$PORT"
+PORT=$(get_yaml_http_port)
+if [ -z "$PORT" ]; then
+    echo "无法从 $YAML_FILE 读取 Web UI 端口。"
+    exit 1
+fi
+
+if [ -f "$CRED_FILE" ]; then
+    echo "首次随机凭据保存在：$CRED_FILE"
+fi
+
+echo "正在打开 Web UI: http://127.0.0.1:$PORT"
+am start -a android.intent.action.VIEW -d "http://127.0.0.1:$PORT" >/dev/null 2>&1
