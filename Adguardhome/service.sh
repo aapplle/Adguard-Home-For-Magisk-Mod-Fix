@@ -9,6 +9,13 @@ SCRIPT_DIR="/data/adb/agh/scripts"
 setup_timezone
 load_config
 
+# Prevent concurrent service.sh execution (e.g. overlapping KSU soft-reboot events).
+acquire_lock "service" 15 || {
+    agh_log WARN "Another service.sh instance is active; exiting duplicate invocation"
+    exit 0
+}
+trap 'release_lock "service"' INT TERM EXIT
+
 # Wait for Android boot completion (bounded to 60s)
 _wait=0
 while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ] && [ "$_wait" -lt 60 ]; do
@@ -78,7 +85,9 @@ else
     update_module_prop_status ok
 fi
 
-# Apply firewall and proxy integration once, then start single unified watchdog
-"$SCRIPT_DIR/iptables.sh" apply
+# Apply firewall only if missing/drifted (avoids unnecessary chain flush on soft reboot)
+if ! "$SCRIPT_DIR/iptables.sh" check; then
+    "$SCRIPT_DIR/iptables.sh" apply
+fi
 [ "$enable_proxy_sync" = "true" ] && "$SCRIPT_DIR/ProxyConfig.sh" apply
 "$SCRIPT_DIR/watchdog.sh" >/dev/null 2>&1 &

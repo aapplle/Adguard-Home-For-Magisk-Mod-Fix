@@ -161,30 +161,55 @@ stop_all_processes() {
     done
 }
 
-# Atomic mkdir-based lock with stale-PID recovery.
+# Atomic mkdir-based lock with stale-PID recovery (avoids race before pid file write).
 acquire_lock() {
     _lock_name="$1"
+    _wait_secs="${2:-0}"
     _lock_dir="$RUN_DIR/${_lock_name}.lock"
     mkdir -p "$RUN_DIR" 2>/dev/null
-    if mkdir "$_lock_dir" 2>/dev/null; then
-        printf '%s\n' "$$" > "$_lock_dir/pid"
-        return 0
-    fi
-    if [ -f "$_lock_dir/pid" ]; then
-        _old_pid=$(cat "$_lock_dir/pid" 2>/dev/null)
-        if [ -n "$_old_pid" ] && kill -0 "$_old_pid" 2>/dev/null; then
-            _old_cmd=$(read_cmdline "/proc/$_old_pid/cmdline")
-            case "$_old_cmd" in
-                *"$_lock_name"*) return 1 ;;
-            esac
+
+    _waited=0
+    while true; do
+        if mkdir "$_lock_dir" 2>/dev/null; then
+            printf '%s\n' "$$" > "$_lock_dir/pid"
+            return 0
         fi
-    fi
-    rm -rf "$_lock_dir" 2>/dev/null
-    if mkdir "$_lock_dir" 2>/dev/null; then
-        printf '%s\n' "$$" > "$_lock_dir/pid"
-        return 0
-    fi
-    return 1
+
+        # If pid file is not written yet, give the lock holder a moment before judging staleness.
+        if [ ! -f "$_lock_dir/pid" ]; then
+            sleep 1
+            _waited=$((_waited + 1))
+        fi
+
+        if [ -f "$_lock_dir/pid" ]; then
+            _old_pid=$(cat "$_lock_dir/pid" 2>/dev/null)
+            if [ -n "$_old_pid" ] && kill -0 "$_old_pid" 2>/dev/null; then
+                _old_cmd=$(read_cmdline "/proc/$_old_pid/cmdline")
+                case "$_old_cmd" in
+                    *"$_lock_name"*|*"$SCRIPT_DIR/"*|*"/service.sh"*)
+                        if [ "$_waited" -ge "$_wait_secs" ]; then
+                            return 1
+                        fi
+                        sleep 1
+                        _waited=$((_waited + 1))
+                        continue
+                        ;;
+                esac
+            fi
+        fi
+
+        # Stale lock detected: clear and retry once.
+        rm -rf "$_lock_dir" 2>/dev/null
+        if mkdir "$_lock_dir" 2>/dev/null; then
+            printf '%s\n' "$$" > "$_lock_dir/pid"
+            return 0
+        fi
+        if [ "$_waited" -ge "$_wait_secs" ]; then
+            return 1
+        fi
+        sleep 1
+        _waited=$((_waited + 1))
+    done
 }
 
 release_lock() {
@@ -219,21 +244,57 @@ get_yaml_sni_ports() {
 
 get_yaml_drop_quic() {
     [ -f "$YAML_FILE" ] || return 1
-    sed -n '/^sni_filter:/,/^[^[:space:]]/ s/^[[:space:]]*drop_quic:[[:space:]]*\(true\|false\).*/\1/p' "$YAML_FILE" | head -n 1
+    _v=$(sed -n '/^sni_filter:/,/^[^[:space:]]/ s/^[[:space:]]*drop_quic:[[:space:]]*\([a-zA-Z]*\).*/\1/p' "$YAML_FILE" | head -n 1)
+    case "$_v" in
+        true|false) echo "$_v" ;;
+    esac
 }
 
-# Probe whether nsenter supports -G <gid> isolation on this device.
+# Locate a busybox or nsenter binary that supports -G <gid> isolation.
+# Sets NSENTER_BIN and NSENTER_SUBCMD ("nsenter" for busybox, empty for standalone).
+NSENTER_BIN=""
+NSENTER_SUBCMD=""
+
+resolve_nsenter_gid() {
+    NSENTER_BIN=""
+    NSENTER_SUBCMD=""
+    for _bb in /data/adb/ksu/bin/busybox /data/adb/magisk/busybox /data/adb/ap/bin/busybox; do
+        if [ -x "$_bb" ] && "$_bb" nsenter -G "$AGH_GID" -t 1 true 2>/dev/null; then
+            NSENTER_BIN="$_bb"
+            NSENTER_SUBCMD="nsenter"
+            return 0
+        fi
+    done
+    if command -v busybox >/dev/null 2>&1 && busybox nsenter -G "$AGH_GID" -t 1 true 2>/dev/null; then
+        NSENTER_BIN="busybox"
+        NSENTER_SUBCMD="nsenter"
+        return 0
+    fi
+    if command -v nsenter >/dev/null 2>&1 && nsenter -G "$AGH_GID" -t 1 true 2>/dev/null; then
+        NSENTER_BIN="nsenter"
+        NSENTER_SUBCMD=""
+        return 0
+    fi
+    return 1
+}
+
 has_nsenter_gid() {
-    command -v nsenter >/dev/null 2>&1 && nsenter -G "$AGH_GID" -t 1 true 2>/dev/null
+    resolve_nsenter_gid
 }
 
 start_agh_process() {
     export SSL_CERT_DIR="/system/etc/security/cacerts/"
     setup_timezone
-    if has_nsenter_gid; then
-        nsenter -G "$AGH_GID" -t 1 "$AGH_BIN" \
-            -c "$YAML_FILE" -w "$BIN_DIR" \
-            --no-check-update --crash-log "$AGH_DIR/crash.log" --logfile discard >/dev/null 2>&1 &
+    if resolve_nsenter_gid; then
+        if [ -n "$NSENTER_SUBCMD" ]; then
+            "$NSENTER_BIN" "$NSENTER_SUBCMD" -G "$AGH_GID" -t 1 "$AGH_BIN" \
+                -c "$YAML_FILE" -w "$BIN_DIR" \
+                --no-check-update --crash-log "$AGH_DIR/crash.log" --logfile discard >/dev/null 2>&1 &
+        else
+            "$NSENTER_BIN" -G "$AGH_GID" -t 1 "$AGH_BIN" \
+                -c "$YAML_FILE" -w "$BIN_DIR" \
+                --no-check-update --crash-log "$AGH_DIR/crash.log" --logfile discard >/dev/null 2>&1 &
+        fi
     else
         agh_log WARN "nsenter -G $AGH_GID unavailable; starting AdGuardHome with uid-only exemption"
         "$AGH_BIN" \
