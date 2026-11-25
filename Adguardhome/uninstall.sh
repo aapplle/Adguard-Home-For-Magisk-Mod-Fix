@@ -6,6 +6,7 @@ SCRIPT_DIR="$AGH_DIR/scripts"
 ADGPATH="/data/adb/modules/AdGuardHome"
 
 if [ -f "$SCRIPT_DIR/common.sh" ]; then
+    # shellcheck source=common.sh
     . "$SCRIPT_DIR/common.sh"
     stop_all_processes
 else

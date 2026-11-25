@@ -3,6 +3,7 @@
 # Usage: iptables.sh [apply|check|clean]
 
 SCRIPT_BASE=$(dirname "$0")
+# shellcheck source=common.sh
 . "$SCRIPT_BASE/common.sh"
 
 CONNBYTES_LIMIT="0:20480"

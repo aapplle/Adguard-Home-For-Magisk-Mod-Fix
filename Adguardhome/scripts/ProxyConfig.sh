@@ -3,6 +3,7 @@
 # Usage: ProxyConfig.sh [apply|clean]
 
 SCRIPT_BASE=$(dirname "$0")
+# shellcheck source=common.sh
 . "$SCRIPT_BASE/common.sh"
 
 ALL_SECTIONS="direct-nameserver: proxy-server-nameserver: nameserver: default-nameserver:"

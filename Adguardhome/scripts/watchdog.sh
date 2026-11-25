@@ -3,6 +3,7 @@
 # Replaces the 4 overlapping 5-second daemons with one single-instance loop.
 
 SCRIPT_BASE=$(dirname "$0")
+# shellcheck source=common.sh
 . "$SCRIPT_BASE/common.sh"
 
 acquire_lock "watchdog" || exit 0

@@ -3,6 +3,7 @@
 # Usage: NoAdsService.sh [apply|clean]
 
 SCRIPT_BASE=$(dirname "$0")
+# shellcheck source=common.sh
 . "$SCRIPT_BASE/common.sh"
 
 PATHS_FILE="$SCRIPT_DIR/noads_paths.list"

@@ -11,7 +11,11 @@ case "$locale" in
 esac
 
 i18n_print() {
-    [ "$language" = "zh" ] && ui_print "$2" || ui_print "$1"
+    if [ "$language" = "zh" ]; then
+        ui_print "$2"
+    else
+        ui_print "$1"
+    fi
 }
 
 AGH_DIR="/data/adb/agh"
@@ -138,6 +142,7 @@ if [ "$IS_UPGRADE" -eq 0 ] && [ -x "$BIN_DIR/AdGuardHome" ]; then
     if [ -n "$_rand_pw" ]; then
         _hash=$(printf '%s\n' "$_rand_pw" | "$BIN_DIR/AdGuardHome" --hash-password 2>/dev/null)
         case "$_hash" in
+            # shellcheck disable=SC2016
             '$2'*)
                 _esc_hash=$(printf '%s' "$_hash" | sed 's/[\\&|]/\\&/g')
                 sed -i "s|^\([[:space:]]*password:\).*|\1 ${_esc_hash}|" "$BIN_DIR/AdGuardHome.yaml"

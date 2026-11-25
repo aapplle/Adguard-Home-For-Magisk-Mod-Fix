@@ -3,6 +3,7 @@
 
 SCRIPT_DIR="/data/adb/agh/scripts"
 [ -f "$SCRIPT_DIR/common.sh" ] || exit 1
+# shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
 setup_timezone

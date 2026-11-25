@@ -2,6 +2,7 @@
 # Open AdGuard Home Web UI via Magisk/KSU/APatch Action button.
 
 SCRIPT_DIR="/data/adb/agh/scripts"
+# shellcheck source=common.sh
 [ -f "$SCRIPT_DIR/common.sh" ] && . "$SCRIPT_DIR/common.sh"
 
 if ! is_agh_running; then

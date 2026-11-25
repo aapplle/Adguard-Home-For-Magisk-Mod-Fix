@@ -36,7 +36,7 @@ jobs:
           for f in Adguardhome/*.sh Adguardhome/scripts/*.sh; do
             sh -n "$f"
           done
-          shellcheck -s sh -e SC2034,SC1091 Adguardhome/*.sh Adguardhome/scripts/*.sh
+          shellcheck -s sh -x -P Adguardhome/scripts -e SC2034 Adguardhome/*.sh Adguardhome/scripts/*.sh
 
       - name: Run rule, YAML, and path quality checks
         run: python3 scripts/lint_rules.py
